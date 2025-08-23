@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Coin Hacim Analizi</title>
+  <style>
+    body { font-family: Arial; margin: 20px; background: #f7f7f7; color: #333; }
+    section { background: #fff; padding: 20px; border-radius: 8px;
+              box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    label, select, button { margin-right: 10px; font-size: 1rem; }
+    nav a { margin: 0 10px; color: #007bff; text-decoration: none; }
+    button { padding: 6px 12px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; display: none; }
+    th, td { padding: 12px; border: 1px solid #ddd; text-align: left; }
+    th { background: #f2f2f2; }
+  </style>
+</head>
+<body>
+  <nav><a href="/">Anasayfa</a></nav>
+  <section>
+    <h1>Coin Hacim Analizi</h1>
+    <div>
+      <label for="coin">Coin:</label>
+      <select id="coin">
+        {% for p in pairs %}<option>{{p}}</option>{% endfor %}
+      </select>
+      <label for="period">Periyot:</label>
+      <select id="period">
+        <option value="1m">1 Dakika</option>
+        <option value="5m">5 Dakika</option>
+        <option value="10m">10 Dakika</option>
+        <option value="15m">15 Dakika</option>
+        <option value="30m">30 Dakika</option>
+        <option value="1h">1 Saat</option>
+        <option value="2h">2 Saat</option>
+        <option value="6h">6 Saat</option>
+        <option value="12h">12 Saat</option>
+        <option value="24h">24 Saat</option>
+      </select>
+      <button onclick="loadVolume()">Göster</button>
+    </div>
+    <table id="results">
+      <thead><tr><th>Met**rik**</th><th>Değer</th></tr></thead>
+      <tbody id="results-body"></tbody>
+    </table>
+  </section>
+  <script>
+    function loadVolume() {
+      const pair = document.getElementById('coin').value;
+      const period = document.getElementById('period').value;
+      fetch(`/volume?pair=${pair}&period=${period}`)
+        .then(r => r.json())
+        .then(d => {
+          document.getElementById('results-body').innerHTML = `
+            <tr><td>Coin</td><td>${d.pair}</td></tr>
+            <tr><td>Periyot</td><td>${d.period}</td></tr>
+            <tr><td>Alım Hacmi (USD)</td><td>${d.buy_volume.toFixed(2)}</td></tr>
+            <tr><td>Satım Hacmi (USD)</td><td>${d.sell_volume.toFixed(2)}</td></tr>
+            <tr><td>Alım Oranı (%)</td><td>${d.buy_percentage.toFixed(2)}</td></tr>
+            <tr><td>Satım Oranı (%)</td><td>${d.sell_percentage.toFixed(2)}</td></tr>
+          `;
+          document.getElementById('results').style.display = 'table';
+        });
+    }
+  </script>
+</body>
+</html>

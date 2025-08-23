@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Kripto Dashboard</title>
+  <style>
+    body { font-family: Arial; margin: 20px; background: #f7f7f7; color: #333; }
+    header { text-align: center; margin-bottom: 20px; }
+    nav a { margin: 0 10px; color: #007bff; text-decoration: none; }
+    nav a:hover { text-decoration: underline; }
+    section { background: #fff; padding: 20px; border-radius: 8px;
+              box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { padding: 10px; border: 1px solid #ddd; text-align: center; }
+    th { background: #f2f2f2; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Kripto Dashboard</h1>
+    <nav>
+      <a href="/">Anasayfa</a>
+      <a href="/volume_page">Hacim Analizi</a>
+      <a href="/new_listings">Listeleme Haberleri</a>
+    </nav>
+  </header>
+  <section>
+    <h2>Potansiyel Yükselişler (Son 5dk %10+)</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Parite</th><th>Fiyat (USD)</th><th>5dk Δ (%)</th>
+          <th>Alım Vol</th><th>Satım Vol</th>
+          <th>Alım %</th><th>Satım %</th><th>Devam Eden?</th>
+        </tr>
+      </thead>
+      <tbody id="alerts-table-body">
+        <tr><td colspan="8">Yükleniyor…</td></tr>
+      </tbody>
+    </table>
+  </section>
+  <script>
+    function fetchAlerts() {
+      fetch('/pricealerts')
+        .then(r => r.json())
+        .then(data => {
+          const tb = document.getElementById('alerts-table-body');
+          tb.innerHTML = '';
+          if (!data.length) {
+            tb.innerHTML = '<tr><td colspan="8">Uyarı yok.</td></tr>';
+            return;
+          }
+          data.forEach(a => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+              <td>${a.pair}</td>
+              <td>${a.last_price.toFixed(4)}</td>
+              <td>${a.five_minute_change.toFixed(2)}</td>
+              <td>${a.buy_volume.toFixed(2)}</td>
+              <td>${a.sell_volume.toFixed(2)}</td>
+              <td>${a.buy_percentage.toFixed(2)}</td>
+              <td>${a.sell_percentage.toFixed(2)}</td>
+              <td>${a.sustained ? 'Evet' : 'Hayır'}</td>
+            `;
+            tb.appendChild(tr);
+          });
+        });
+    }
+    fetchAlerts();
+    setInterval(fetchAlerts, 30 * 1000);
+  </script>
+</body>
+</html>
