@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Kripto Dashboard</title>
+  <title>Kripto Dashboard - 1 Dakika Analizi</title>
   <style>
     body { font-family: Arial; margin: 20px; background: #f7f7f7; color: #333; }
     header { text-align: center; margin-bottom: 20px; }
@@ -13,29 +13,49 @@
     table { width: 100%; border-collapse: collapse; margin-top: 10px; }
     th, td { padding: 10px; border: 1px solid #ddd; text-align: center; }
     th { background: #f2f2f2; }
+    .positive { color: #28a745; font-weight: bold; }
+    .negative { color: #dc3545; }
+    .sustained { background-color: #ffe6e6; }
+    .alert-info { background: #d1ecf1; padding: 15px; border-radius: 5px; margin-bottom: 20px; border-left: 4px solid #bee5eb; }
   </style>
 </head>
 <body>
   <header>
-    <h1>Kripto Dashboard</h1>
+    <h1>🚀 Kripto Dashboard - 1 Dakika Analizi</h1>
     <nav>
       <a href="/">Anasayfa</a>
       <a href="/volume_page">Hacim Analizi</a>
       <a href="/new_listings">Listeleme Haberleri</a>
+      <a href="/test_email">Test Email</a>
+      <a href="/email_settings">Email Ayarları</a>
     </nav>
   </header>
+  
+  <div class="alert-info">
+    <strong>📊 Yeni Analiz Sistemi:</strong> 
+    Sistem artık <strong>1 dakika</strong> içinde %10+ yükselen coinleri takip ediyor. 
+    Her 30 saniyede kontrol yapılır ve %10+ artış tespit edildiğinde otomatik email gönderilir.
+  </div>
+  
   <section>
-    <h2>Potansiyel Yükselişler (Son 5dk %10+)</h2>
+    <h2>🔥 Potansiyel Yükselişler (Son 1dk %10+)</h2>
+    <p><strong>Güncelleme:</strong> <span id="last-update">-</span> | <strong>Aktif Alert:</strong> <span id="alert-count">0</span></p>
     <table>
       <thead>
         <tr>
-          <th>Parite</th><th>Fiyat (USD)</th><th>5dk Δ (%)</th>
-          <th>Alım Vol</th><th>Satım Vol</th>
-          <th>Alım %</th><th>Satım %</th><th>Devam Eden?</th>
+          <th>Parite</th>
+          <th>Fiyat (USD)</th>
+          <th>1dk Δ (%)</th>
+          <th>Günlük Δ (%)</th>
+          <th>Alım Vol</th>
+          <th>Satım Vol</th>
+          <th>Alım %</th>
+          <th>Devam Eden?</th>
+          <th>İşlem</th>
         </tr>
       </thead>
       <tbody id="alerts-table-body">
-        <tr><td colspan="8">Yükleniyor…</td></tr>
+        <tr><td colspan="9">Yükleniyor…</td></tr>
       </tbody>
     </table>
   </section>
@@ -45,29 +65,65 @@
         .then(r => r.json())
         .then(data => {
           const tb = document.getElementById('alerts-table-body');
+          const alertCount = document.getElementById('alert-count');
+          const lastUpdate = document.getElementById('last-update');
+          
           tb.innerHTML = '';
+          alertCount.textContent = data.length;
+          lastUpdate.textContent = new Date().toLocaleTimeString('tr-TR');
+          
           if (!data.length) {
-            tb.innerHTML = '<tr><td colspan="8">Uyarı yok.</td></tr>';
+            tb.innerHTML = '<tr><td colspan="9">Şu anda %10+ artış tespit edilmedi.</td></tr>';
             return;
           }
+          
+          // Yüksek değişime göre sırala
+          data.sort((a, b) => b.one_minute_change - a.one_minute_change);
+          
           data.forEach(a => {
             const tr = document.createElement('tr');
+            if (a.sustained) tr.classList.add('sustained');
+            
             tr.innerHTML = `
-              <td>${a.pair}</td>
-              <td>${a.last_price.toFixed(4)}</td>
-              <td>${a.five_minute_change.toFixed(2)}</td>
-              <td>${a.buy_volume.toFixed(2)}</td>
-              <td>${a.sell_volume.toFixed(2)}</td>
-              <td>${a.buy_percentage.toFixed(2)}</td>
-              <td>${a.sell_percentage.toFixed(2)}</td>
-              <td>${a.sustained ? 'Evet' : 'Hayır'}</td>
+              <td><strong>${a.pair}</strong></td>
+              <td>$${a.last_price.toFixed(6)}</td>
+              <td class="positive">+${a.one_minute_change.toFixed(2)}%</td>
+              <td class="${a.daily_change > 0 ? 'positive' : 'negative'}">
+                ${a.daily_change > 0 ? '+' : ''}${a.daily_change.toFixed(2)}%
+              </td>
+              <td>${a.buy_volume.toFixed(0)}</td>
+              <td>${a.sell_volume.toFixed(0)}</td>
+              <td class="positive">${a.buy_percentage.toFixed(1)}%</td>
+              <td>${a.sustained ? '🔥 Evet' : '⏳ Hayır'}</td>
+              <td>
+                <a href="https://www.gate.io/trade/${a.pair}" target="_blank" 
+                   style="background: #007bff; color: white; padding: 4px 8px; text-decoration: none; border-radius: 3px; font-size: 11px;">
+                  📈 Trade
+                </a>
+              </td>
             `;
             tb.appendChild(tr);
           });
+        })
+        .catch(err => {
+          console.error('Fetch error:', err);
+          document.getElementById('alerts-table-body').innerHTML = 
+            '<tr><td colspan="9" style="color: red;">❌ Veri yüklenirken hata oluştu</td></tr>';
         });
     }
+    
+    // İlk yükleme
     fetchAlerts();
-    setInterval(fetchAlerts, 30 * 1000);
+    
+    // 15 saniyede bir güncelle (hızlı takip için)
+    setInterval(fetchAlerts, 15 * 1000);
+    
+    // Sayfa görünür olduğunda otomatik yenile
+    document.addEventListener('visibilitychange', function() {
+      if (!document.hidden) {
+        fetchAlerts();
+      }
+    });
   </script>
 </body>
 </html>

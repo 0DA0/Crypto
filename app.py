@@ -31,7 +31,7 @@ class EmailAlertService:
         self.receiver_email = os.getenv('RECEIVER_EMAIL', self.sender_email)
         self.last_alert_time = {}  # Spam önleme için
         
-    def should_send_alert(self, pair, min_interval=300):  # 5 dakika spam önleme
+    def should_send_alert(self, pair, min_interval=180):  # 3 dakika spam önleme (1 dakika analiz için kısalttık)
         """Aynı coin için çok sık alert göndermeyi önle"""
         current_time = time.time()
         if pair in self.last_alert_time:
@@ -51,7 +51,7 @@ class EmailAlertService:
             logging.info(f"Spam önleme: {pair} için alert atlandı")
             return
             
-        subject = f"🚀 {pair} - %{alert_data['five_minute_change']:.1f} YÜKSELİŞ!"
+        subject = f"🚀 {pair} - %{alert_data['one_minute_change']:.1f} YÜKSELİŞ! (1dk)"
         html_content = self._create_detailed_alert_html(alert_data)
         
         self._send_email(subject, html_content)
@@ -60,7 +60,7 @@ class EmailAlertService:
         """Detaylı alert HTML'i oluştur"""
         
         # Renk kodları
-        change_color = "#28a745" if alert['five_minute_change'] > 0 else "#dc3545"
+        change_color = "#28a745" if alert['one_minute_change'] > 0 else "#dc3545"
         daily_color = "#28a745" if alert.get('daily_change', 0) > 0 else "#dc3545"
         sustained_badge = "🔥 DEVAM EDİYOR" if alert.get('sustained') else "⏳ İlk Tespit"
         sustained_color = "#dc3545" if alert.get('sustained') else "#ffc107"
@@ -121,9 +121,9 @@ class EmailAlertService:
                     <div class="main-stats">
                         <div class="stat-box">
                             <div class="stat-value" style="color: {change_color}">
-                                %{alert['five_minute_change']:.2f}
+                                %{alert['one_minute_change']:.2f}
                             </div>
-                            <div class="stat-label">5 Dakika Değişim</div>
+                            <div class="stat-label">1 Dakika Değişim</div>
                         </div>
                         <div class="stat-box">
                             <div class="stat-value" style="color: {daily_color}">
@@ -146,7 +146,7 @@ class EmailAlertService:
                     
                     <!-- Volume Bilgileri -->
                     <div class="volume-section">
-                        <div class="volume-title">📊 HACIM ANALİZİ (Son 5 Dakika)</div>
+                        <div class="volume-title">📊 HACIM ANALİZİ (Son 1 Dakika)</div>
                         <div class="volume-grid">
                             <div class="volume-item">
                                 <div class="volume-value">${alert['buy_volume']:.0f}</div>
@@ -185,7 +185,7 @@ class EmailAlertService:
                         
                         <!-- Ek Volume Metrikleri -->
                         <div style="margin-top: 15px; font-size: 14px;">
-                            <div>🔸 <strong>Alım/Satım Oranı:</strong> {alert['buy_percentage']/alert['sell_percentage']:.2f}</div>
+                            <div>🔸 <strong>Alım/Satım Oranı:</strong> {alert['buy_percentage']/max(alert['sell_percentage'], 0.1):.2f}</div>
                             <div>🔸 <strong>Ortalama İşlem:</strong> ${(alert['buy_volume'] + alert['sell_volume']) / max(alert.get('trade_count', 1), 1):.0f}</div>
                         </div>
                     </div>
@@ -250,7 +250,7 @@ except:
 
 # ------------------ DATA STRUCTURES ------------------
 daily_baseline = {}
-five_minute_baseline = {}
+one_minute_baseline = {}  # 5 dakika yerine 1 dakika
 price_history = {}
 price_alerts = []
 
@@ -258,9 +258,9 @@ price_alerts = []
 email_service = EmailAlertService()
 
 # ------------------ PARAMETERS ------------------
-FIVE_MINUTE_THRESHOLD = 10.0   # %10 threshold over 5 minutes
-MIN_TRADE_VOLUME     = 250.0   # Min $250 volume
-EMAIL_ALERT_THRESHOLD = 15.0   # %15+ değişim için email gönder
+ONE_MINUTE_THRESHOLD = 10.0   # %10 threshold over 1 minute (5 dakika yerine 1 dakika)
+MIN_TRADE_VOLUME     = 500.0   # Min $100 volume (1 dakika için daha düşük)
+EMAIL_ALERT_THRESHOLD = float(os.getenv('EMAIL_ALERT_THRESHOLD', 10.0))  # .env'den al, varsayılan %10
 
 # ------------------ NEWS API ------------------
 NEWS_API_KEY = os.getenv('NEWS_API_KEY')
@@ -278,13 +278,13 @@ combine_tickers = get_gateio_tickers
 
 # ------------------ ENHANCED TRADE VOLUME ANALYSIS ------------------
 def get_enhanced_trade_volumes(pair, period_seconds):
-    """Gelişmiş volume analizi - 1 saat ve 5 dakika karşılaştırması"""
+    """Gelişmiş volume analizi - 1 dakika analizi"""
     cutoff = time.time() - period_seconds
     buy_vol = sell_vol = trade_count = 0.0
     
     try:
         trades = requests.get(
-            f"https://api.gateio.ws/api/v4/spot/trades?currency_pair={pair}&limit=1000",
+            f"https://api.gateio.ws/api/v4/spot/trades?currency_pair={pair}&limit=500", # 1 dakika için daha az limit
             timeout=10
         ).json()
     except Exception as e:
@@ -344,29 +344,29 @@ def check_price_changes():
 
         # Initialize baselines if first seen
         daily_baseline.setdefault(pair, last)
-        prev_baseline = five_minute_baseline.get(pair, last)
+        prev_baseline = one_minute_baseline.get(pair, last)  # 1 dakika baseline
 
-        # Compute 5-minute change
-        change5 = ((last - prev_baseline) / prev_baseline) * 100 if prev_baseline > 0 else 0
+        # Compute 1-minute change
+        change1 = ((last - prev_baseline) / prev_baseline) * 100 if prev_baseline > 0 else 0
 
         # Manage history: keep only consecutive threshold breaches
         hist = price_history.setdefault(pair, [])
-        if change5 >= FIVE_MINUTE_THRESHOLD:
-            hist.append(change5)
+        if change1 >= ONE_MINUTE_THRESHOLD:
+            hist.append(change1)
             if len(hist) > 2:
                 hist.pop(0)
         else:
             hist.clear()
 
         # Shift baseline forward
-        five_minute_baseline[pair] = last
+        one_minute_baseline[pair] = last
 
         # If not breaching threshold, skip
-        if change5 < FIVE_MINUTE_THRESHOLD:
+        if change1 < ONE_MINUTE_THRESHOLD:
             continue
 
-        # Enhanced volume analysis
-        buy_v, sell_v, bp, sp, trade_count = get_enhanced_trade_volumes(pair, 300)  # 5 dakika
+        # Enhanced volume analysis - 1 dakika için
+        buy_v, sell_v, bp, sp, trade_count = get_enhanced_trade_volumes(pair, 60)  # 60 saniye = 1 dakika
         if buy_v == 0 and sell_v == 0:
             continue
 
@@ -379,7 +379,7 @@ def check_price_changes():
         alert_data = {
             'pair': pair,
             'last_price': last,
-            'five_minute_change': change5,
+            'one_minute_change': change1,  # 5 dakika yerine 1 dakika
             'daily_change': daily_change,
             'buy_volume': buy_v,
             'sell_volume': sell_v,
@@ -393,9 +393,9 @@ def check_price_changes():
 
         alerts.append(alert_data)
         
-        # EMAIL ALERT GÖNDER - Yüksek değişimler için
-        if change5 >= EMAIL_ALERT_THRESHOLD:
-            logging.info(f"📧 Email alert gönderiliyor: {pair} %{change5:.1f}")
+        # EMAIL ALERT GÖNDER - %10+ değişimler için (threshold .env'den geliyor)
+        if change1 >= EMAIL_ALERT_THRESHOLD:
+            logging.info(f"📧 Email alert gönderiliyor: {pair} %{change1:.1f}")
             email_service.send_detailed_alert(alert_data)
 
     price_alerts = alerts
@@ -432,7 +432,7 @@ def get_listing_announcements():
 
 # ------------------ SCHEDULER ------------------
 scheduler = BackgroundScheduler()
-scheduler.add_job(check_price_changes, 'interval', minutes=2)
+scheduler.add_job(check_price_changes, 'interval', seconds=30)  # 30 saniyede bir kontrol (1 dakika analizi için)
 scheduler.start()
 check_price_changes()  # İlk çalıştırma
 
@@ -477,7 +477,7 @@ def test_email():
     test_alert = {
         'pair': 'TEST_USDT',
         'last_price': 0.123456,
-        'five_minute_change': 25.5,
+        'one_minute_change': 25.5,  # 1 dakika değişim
         'daily_change': 45.2,
         'buy_volume': 15000,
         'sell_volume': 8500,
@@ -498,7 +498,9 @@ def email_settings():
         "email_configured": bool(email_service.sender_email and email_service.sender_password),
         "sender_email": email_service.sender_email,
         "receiver_email": email_service.receiver_email,
-        "email_threshold": EMAIL_ALERT_THRESHOLD
+        "email_threshold": EMAIL_ALERT_THRESHOLD,
+        "check_interval": "30 saniye",
+        "analysis_period": "1 dakika"
     })
 
 if __name__ == '__main__':
