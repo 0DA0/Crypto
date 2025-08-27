@@ -6,6 +6,7 @@ import os
 import re
 import smtplib
 import ssl
+import threading
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
@@ -21,6 +22,88 @@ app = Flask(__name__)
 # Logging ayarları
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+# ------------------ KEEP-ALIVE SİSTEMİ ------------------
+class KeepAliveService:
+    def __init__(self, app_url=None):
+        """Keep-Alive servisi - Sunucuyu ayakta tutar"""
+        self.app_url = app_url or os.getenv('RENDER_APP_URL', 'https://yourapp.onrender.com')
+        self.ping_interval = 14 * 60  # 14 dakika (840 saniye)
+        self.scheduler = BackgroundScheduler()
+        self.is_running = False
+        self.logger = logging.getLogger('KeepAlive')
+        
+    def ping_server(self):
+        """Sunucuya self-ping gönder"""
+        try:
+            response = requests.get(
+                f"{self.app_url}/keepalive", 
+                timeout=10,
+                headers={
+                    'User-Agent': 'KeepAlive-Bot/1.0',
+                    'Accept': 'application/json'
+                }
+            )
+            
+            if response.status_code == 200:
+                self.logger.info(f"✅ Keep-alive ping başarılı - Status: {response.status_code}")
+            else:
+                self.logger.warning(f"⚠️ Keep-alive ping - Unexpected status: {response.status_code}")
+                
+        except requests.exceptions.Timeout:
+            self.logger.error("❌ Keep-alive ping timeout (10s)")
+        except requests.exceptions.ConnectionError:
+            self.logger.error("❌ Keep-alive ping - Connection error")
+        except Exception as e:
+            self.logger.error(f"❌ Keep-alive ping hatası: {e}")
+    
+    def start(self):
+        """Keep-alive servisini başlat"""
+        if self.is_running:
+            self.logger.info("Keep-alive zaten çalışıyor")
+            return
+            
+        try:
+            self.logger.info(f"🚀 Keep-alive servisi başlatılıyor...")
+            self.logger.info(f"📍 Target URL: {self.app_url}")
+            self.logger.info(f"⏰ Ping interval: {self.ping_interval//60} dakika")
+            
+            # Scheduler'a job ekle - her 14 dakikada bir
+            self.scheduler.add_job(
+                self.ping_server,
+                'interval',
+                seconds=self.ping_interval,
+                id='keepalive_ping',
+                replace_existing=True,
+                max_instances=1
+            )
+            
+            self.scheduler.start()
+            self.is_running = True
+            
+            # İlk ping'i 5 saniye sonra yap
+            threading.Timer(5.0, self.ping_server).start()
+            
+            self.logger.info(f"✅ Keep-alive aktif - Her {self.ping_interval//60} dakikada ping")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Keep-alive başlatma hatası: {e}")
+    
+    def stop(self):
+        """Keep-alive servisini durdur"""
+        if self.scheduler.running:
+            self.scheduler.shutdown()
+        self.is_running = False
+        self.logger.info("🛑 Keep-alive servisi durduruldu")
+    
+    def manual_ping(self):
+        """Manuel ping gönder (test için)"""
+        self.logger.info("🔧 Manuel ping gönderiliyor...")
+        self.ping_server()
+
+# Keep-alive servisini başlat
+keep_alive_service = KeepAliveService()
+keep_alive_service.start()
+
 # ------------------ EMAIL ALERT SINIFI ------------------
 class EmailAlertService:
     def __init__(self):
@@ -31,7 +114,7 @@ class EmailAlertService:
         self.receiver_email = os.getenv('RECEIVER_EMAIL', self.sender_email)
         self.last_alert_time = {}  # Spam önleme için
         
-    def should_send_alert(self, pair, min_interval=180):  # 3 dakika spam önleme (1 dakika analiz için kısalttık)
+    def should_send_alert(self, pair, min_interval=180):
         """Aynı coin için çok sık alert göndermeyi önle"""
         current_time = time.time()
         if pair in self.last_alert_time:
@@ -100,8 +183,6 @@ class EmailAlertService:
                 
                 .alert-footer {{ background: #fff3cd; padding: 15px; border-radius: 8px; border-left: 4px solid #ffc107; margin-top: 20px; }}
                 .warning {{ color: #856404; font-size: 13px; }}
-                
-                .sustained {{ background: #ffe6e6; border-left: 4px solid #dc3545; }}
                 
                 @media (max-width: 600px) {{
                     .main-stats {{ flex-direction: column; }}
@@ -250,7 +331,7 @@ except:
 
 # ------------------ DATA STRUCTURES ------------------
 daily_baseline = {}
-one_minute_baseline = {}  # 5 dakika yerine 1 dakika
+one_minute_baseline = {}
 price_history = {}
 price_alerts = []
 
@@ -258,9 +339,9 @@ price_alerts = []
 email_service = EmailAlertService()
 
 # ------------------ PARAMETERS ------------------
-ONE_MINUTE_THRESHOLD = 10.0   # %10 threshold over 1 minute (5 dakika yerine 1 dakika)
-MIN_TRADE_VOLUME     = 500.0   # Min $100 volume (1 dakika için daha düşük)
-EMAIL_ALERT_THRESHOLD = float(os.getenv('EMAIL_ALERT_THRESHOLD', 10.0))  # .env'den al, varsayılan %10
+ONE_MINUTE_THRESHOLD = 10.0
+MIN_TRADE_VOLUME = 500.0
+EMAIL_ALERT_THRESHOLD = float(os.getenv('EMAIL_ALERT_THRESHOLD', 10.0))
 
 # ------------------ NEWS API ------------------
 NEWS_API_KEY = os.getenv('NEWS_API_KEY')
@@ -284,7 +365,7 @@ def get_enhanced_trade_volumes(pair, period_seconds):
     
     try:
         trades = requests.get(
-            f"https://api.gateio.ws/api/v4/spot/trades?currency_pair={pair}&limit=500", # 1 dakika için daha az limit
+            f"https://api.gateio.ws/api/v4/spot/trades?currency_pair={pair}&limit=500",
             timeout=10
         ).json()
     except Exception as e:
@@ -316,7 +397,6 @@ def get_enhanced_trade_volumes(pair, period_seconds):
 def get_1hour_volume(pair):
     """1 saatlik hacim al"""
     try:
-        # Gate.io'dan 1 saatlik klines verisi al
         r = requests.get(
             f"https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair={pair}&limit=1&interval=1h",
             timeout=10
@@ -324,7 +404,6 @@ def get_1hour_volume(pair):
         if r.status_code == 200:
             data = r.json()
             if data and len(data) > 0:
-                # Volume candlestick verisinin 5. elemanı
                 return float(data[0][5]) if len(data[0]) > 5 else "N/A"
     except Exception as e:
         logging.error(f"1h volume hatası {pair}: {e}")
@@ -344,7 +423,7 @@ def check_price_changes():
 
         # Initialize baselines if first seen
         daily_baseline.setdefault(pair, last)
-        prev_baseline = one_minute_baseline.get(pair, last)  # 1 dakika baseline
+        prev_baseline = one_minute_baseline.get(pair, last)
 
         # Compute 1-minute change
         change1 = ((last - prev_baseline) / prev_baseline) * 100 if prev_baseline > 0 else 0
@@ -366,7 +445,7 @@ def check_price_changes():
             continue
 
         # Enhanced volume analysis - 1 dakika için
-        buy_v, sell_v, bp, sp, trade_count = get_enhanced_trade_volumes(pair, 60)  # 60 saniye = 1 dakika
+        buy_v, sell_v, bp, sp, trade_count = get_enhanced_trade_volumes(pair, 60)
         if buy_v == 0 and sell_v == 0:
             continue
 
@@ -379,7 +458,7 @@ def check_price_changes():
         alert_data = {
             'pair': pair,
             'last_price': last,
-            'one_minute_change': change1,  # 5 dakika yerine 1 dakika
+            'one_minute_change': change1,
             'daily_change': daily_change,
             'buy_volume': buy_v,
             'sell_volume': sell_v,
@@ -393,7 +472,7 @@ def check_price_changes():
 
         alerts.append(alert_data)
         
-        # EMAIL ALERT GÖNDER - %10+ değişimler için (threshold .env'den geliyor)
+        # EMAIL ALERT GÖNDER
         if change1 >= EMAIL_ALERT_THRESHOLD:
             logging.info(f"📧 Email alert gönderiliyor: {pair} %{change1:.1f}")
             email_service.send_detailed_alert(alert_data)
@@ -432,7 +511,7 @@ def get_listing_announcements():
 
 # ------------------ SCHEDULER ------------------
 scheduler = BackgroundScheduler()
-scheduler.add_job(check_price_changes, 'interval', seconds=30)  # 30 saniyede bir kontrol (1 dakika analizi için)
+scheduler.add_job(check_price_changes, 'interval', seconds=30)
 scheduler.start()
 check_price_changes()  # İlk çalıştırma
 
@@ -470,6 +549,38 @@ def new_listings_page():
     listings = get_listing_announcements()
     return render_template('new_listings.html', listings=listings)
 
+# ------------------ KEEP-ALIVE ENDPOINTS ------------------
+@app.route('/keepalive')
+def keepalive_endpoint():
+    """Keep-alive için hafif endpoint"""
+    return {
+        'status': 'alive',
+        'timestamp': time.time(),
+        'message': 'Server is running',
+        'keepalive_active': keep_alive_service.is_running
+    }, 200
+
+@app.route('/keepalive/ping')
+def manual_ping_endpoint():
+    """Manuel ping endpoint (test için)"""
+    keep_alive_service.manual_ping()
+    return {
+        'status': 'ping_sent',
+        'timestamp': time.time(),
+        'message': 'Manuel ping gönderildi'
+    }, 200
+
+@app.route('/keepalive/status')
+def keepalive_status():
+    """Keep-alive sistem durumunu kontrol et"""
+    return jsonify({
+        "keepalive_active": keep_alive_service.is_running,
+        "ping_interval_minutes": 14,
+        "render_url": os.getenv('RENDER_APP_URL', 'Not configured'),
+        "target_url": keep_alive_service.app_url,
+        "message": "Keep-alive sistemi aktif - Sunucu her 14 dakikada kendine ping atıyor" if keep_alive_service.is_running else "Keep-alive pasif"
+    })
+
 # ------------------ TEST ROUTES ------------------
 @app.route('/test_email')
 def test_email():
@@ -477,7 +588,7 @@ def test_email():
     test_alert = {
         'pair': 'TEST_USDT',
         'last_price': 0.123456,
-        'one_minute_change': 25.5,  # 1 dakika değişim
+        'one_minute_change': 25.5,
         'daily_change': 45.2,
         'buy_volume': 15000,
         'sell_volume': 8500,
@@ -500,7 +611,9 @@ def email_settings():
         "receiver_email": email_service.receiver_email,
         "email_threshold": EMAIL_ALERT_THRESHOLD,
         "check_interval": "30 saniye",
-        "analysis_period": "1 dakika"
+        "analysis_period": "1 dakika",
+        "keepalive_active": keep_alive_service.is_running,
+        "render_url": os.getenv('RENDER_APP_URL', 'Not configured')
     })
 
 if __name__ == '__main__':
