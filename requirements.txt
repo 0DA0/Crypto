@@ -2,7 +2,6 @@ Flask
 requests
 apscheduler
 python-dotenv
-numpy
 gunicorn
 setuptools
 wheel
