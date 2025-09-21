@@ -12,7 +12,6 @@ from datetime import datetime, timedelta
 import logging
 from apscheduler.schedulers.background import BackgroundScheduler
 from dotenv import load_dotenv
-import numpy as np
 from collections import defaultdict, deque
 import statistics
 
