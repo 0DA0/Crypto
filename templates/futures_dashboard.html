@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🚀 Crypto Futures Monitor v2.0</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: white;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 25px;
+            border-radius: 15px;
+            backdrop-filter: blur(10px);
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            background: linear-gradient(45deg, #ff6b6b, #4ecdc4, #45b7d1);
+            background-size: 200% 200%;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            animation: gradientShift 3s ease infinite;
+        }
+
+        @keyframes gradientShift {
+            0%, 100% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+        }
+
+        .subtitle {
+            opacity: 0.9;
+            font-size: 1.1rem;
+            margin-bottom: 20px;
+        }
+
+        .nav-links {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .nav-btn {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 25px;
+            text-decoration: none;
+            transition: all 0.3s ease;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+
+        .nav-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: translateY(-2px);
+        }
+
+        .status-bar {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .status-card {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 20px;
+            border-radius: 12px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .status-value {
+            font-size: 1.8rem;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .status-label {
+            opacity: 0.8;
+            font-size: 0.9rem;
+        }
+
+        .signals-section {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 30px;
+            border-radius: 15px;
+            backdrop-filter: blur(10px);
+            margin-bottom: 30px;
+        }
+
+        .section-title {
+            font-size: 1.5rem;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .signals-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 20px;
+        }
+
+        .signal-card {
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.15) 0%, rgba(255, 255, 255, 0.05) 100%);
+            padding: 25px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .signal-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: var(--signal-color, #4ecdc4);
+        }
+
+        .signal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .signal-symbol {
+            font-size: 1.3rem;
+            font-weight: bold;
+        }
+
+        .signal-type {
+            background: var(--signal-color, #4ecdc4);
+            color: white;
+            padding: 4px 12px;
+            border-radius: 15px;
+            font-size: 0.8rem;
+            font-weight: bold;
+        }
+
+        .signal-details {
+            margin: 15px 0;
+        }
+
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 0.9rem;
+        }
+
+        .detail-label {
+            opacity: 0.8;
+        }
+
+        .detail-value {
+            font-weight: bold;
+        }
+
+        .signal-description {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            margin: 15px 0;
+            line-height: 1.4;
+        }
+
+        .signal-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .action-btn {
+            flex: 1;
+            padding: 8px 12px;
+            border-radius: 6px;
+            text-decoration: none;
+            text-align: center;
+            font-size: 0.8rem;
+            font-weight: bold;
+            transition: all 0.3s ease;
+        }
+
+        .btn-gateio {
+            background: #f0b90b;
+            color: #000;
+        }
+
+        .btn-tradingview {
+            background: #2962ff;
+            color: white;
+        }
+
+        .action-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .no-signals {
+            text-align: center;
+            padding: 40px;
+            opacity: 0.8;
+        }
+
+        .market-overview {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .overview-card {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 20px;
+            border-radius: 12px;
+            backdrop-filter: blur(10px);
+        }
+
+        .overview-title {
+            font-size: 1.2rem;
+            margin-bottom: 15px;
+            color: #4ecdc4;
+        }
+
+        .coin-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .coin-symbol {
+            font-weight: bold;
+        }
+
+        .coin-change {
+            font-weight: bold;
+        }
+
+        .positive { color: #2ed573; }
+        .negative { color: #ff4757; }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            font-size: 1.1rem;
+        }
+
+        .pulse {
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 15px;
+            }
+            
+            .header h1 {
+                font-size: 2rem;
+            }
+            
+            .signals-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .nav-links {
+                gap: 10px;
+            }
+            
+            .nav-btn {
+                padding: 8px 16px;
+                font-size: 0.9rem;
+            }
+        }
+
+        /* Signal type colors */
+        .signal-card[data-signal="BREAKOUT"] { --signal-color: #ff6b6b; }
+        .signal-card[data-signal="RSI_OVERSOLD"] { --signal-color: #4ecdc4; }
+        .signal-card[data-signal="RSI_OVERBOUGHT"] { --signal-color: #ff9f43; }
+        .signal-card[data-signal="VOLUME_SPIKE"] { --signal-color: #a55eea; }
+        .signal-card[data-signal="BOLLINGER_BREAKOUT"] { --signal-color: #26d0ce; }
+        .signal-card[data-signal="MACD_BULLISH"] { --signal-color: #2ed573; }
+        .signal-card[data-signal="MACD_BEARISH"] { --signal-color: #ff4757; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 Crypto Futures Monitor v2.0</h1>
+            <div class="subtitle">
+                Gelişmiş Teknik Analiz ile Futures Sinyalleri
+            </div>
+            <div class="nav-links">
+                <a href="/test_email" class="nav-btn">📧 Test Email</a>
+                <a href="/system_status" class="nav-btn">⚙️ Sistem Durumu</a>
+                <a href="/manual_scan" class="nav-btn">🔍 Manuel Tarama</a>
+            </div>
+        </div>
+
+        <!-- Sistem Durumu -->
+        <div class="status-bar">
+            <div class="status-card">
+                <div class="status-value" id="signal-count">-</div>
+                <div class="status-label">Aktif Sinyal</div>
+            </div>
+            <div class="status-card">
+                <div class="status-value" id="last-scan">-</div>
+                <div class="status-label">Son Tarama</div>
+            </div>
+            <div class="status-card">
+                <div class="status-value" id="system-status">-</div>
+                <div class="status-label">Sistem Durumu</div>
+            </div>
+            <div class="status-card">
+                <div class="status-value" id="scan-interval">2 dk</div>
+                <div class="status-label">Tarama Aralığı</div>
+            </div>
+        </div>
+
+        <!-- Aktif Sinyaller -->
+        <div class="signals-section">
+            <h2 class="section-title">
+                🎯 Aktif Trading Sinyalleri
+                <span id="live-indicator" class="pulse" style="color: #2ed573;">●</span>
+            </h2>
+            <div id="signals-container">
+                <div class="loading">
+                    <div class="pulse">🔍 Sinyaller yükleniyor...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Piyasa Genel Görünüm -->
+        <div class="market-overview" id="market-overview">
+            <div class="overview-card">
+                <div class="overview-title">📈 En Çok Yükselenler</div>
+                <div id="top-gainers">Yükleniyor...</div>
+            </div>
+            <div class="overview-card">
+                <div class="overview-title">📉 En Çok Düşenler</div>
+                <div id="top-losers">Yükleniyor...</div>
+            </div>
+            <div class="overview-card">
+                <div class="overview-title">💰 Hacim Liderleri</div>
+                <div id="volume-leaders">Yükleniyor...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let signalCount = 0;
+        let lastUpdateTime = null;
+
+        // Format number with suffixes
+        function formatNumber(num) {
+            if (num >= 1e9) return (num / 1e9).toFixed(1) + 'B';
+            if (num >= 1e6) return (num / 1e6).toFixed(1) + 'M';
+            if (num >= 1e3) return (num / 1e3).toFixed(1) + 'K';
+            return num.toFixed(2);
+        }
+
+        // Format time ago
+        function timeAgo(date) {
+            const seconds = Math.floor((new Date() - date) / 1000);
+            if (seconds < 60) return `${seconds}s önce`;
+            const minutes = Math.floor(seconds / 60);
+            if (minutes < 60) return `${minutes}dk önce`;
+            const hours = Math.floor(minutes / 60);
+            return `${hours}s önce`;
+        }
+
+        // Fetch active signals
+        async function fetchSignals() {
+            try {
+                const response = await fetch('/api/signals');
+                const signals = await response.json();
+                
+                signalCount = signals.length;
+                document.getElementById('signal-count').textContent = signalCount;
+                
+                const container = document.getElementById('signals-container');
+                
+                if (signals.length === 0) {
+                    container.innerHTML = `
+                        <div class="no-signals">
+                            <div style="font-size: 3rem; margin-bottom: 10px;">🔍</div>
+                            <div>Şu anda aktif sinyal bulunmuyor</div>
+                            <div style="opacity: 0.7; font-size: 0.9rem; margin-top: 5px;">
+                                Sistem her 2 dakikada bir piyasayı tarayarak güçlü sinyalleri tespit ediyor
+                            </div>
+                        </div>
+                    `;
+                    return;
+                }
+
+                // Sort by signal strength and recency
+                signals.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+                container.innerHTML = `
+                    <div class="signals-grid">
+                        ${signals.map(signal => createSignalCard(signal)).join('')}
+                    </div>
+                `;
+
+            } catch (error) {
+                console.error('Sinyal yükleme hatası:', error);
+                document.getElementById('signals-container').innerHTML = `
+                    <div class="no-signals" style="color: #ff4757;">
+                        ❌ Sinyaller yüklenirken hata oluştu
+                    </div>
+                `;
+            }
+        }
+
+        // Create signal card HTML
+        function createSignalCard(signal) {
+            const signalTime = new Date(signal.timestamp);
+            const changeColor = signal.change_percent > 0 ? 'positive' : 'negative';
+            const changeSign = signal.change_percent > 0 ? '+' : '';
+            
+            return `
+                <div class="signal-card" data-signal="${signal.signal_type}">
+                    <div class="signal-header">
+                        <div class="signal-symbol">${signal.symbol}</div>
+                        <div class="signal-type">${signal.signal_type.replace('_', ' ')}</div>
+                    </div>
+                    
+                    <div class="signal-details">
+                        <div class="detail-row">
+                            <span class="detail-label">💰 Fiyat</span>
+                            <span class="detail-value">$${parseFloat(signal.price).toFixed(4)}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">📊 24s Değişim</span>
+                            <span class="detail-value ${changeColor}">${changeSign}${signal.change_percent.toFixed(2)}%</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">📈 RSI</span>
+                            <span class="detail-value">${signal.rsi ? signal.rsi.toFixed(1) : 'N/A'}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">🔊 Hacim Çarpanı</span>
+                            <span class="detail-value">${signal.volume_spike ? signal.volume_spike.toFixed(1) + 'x' : 'N/A'}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">⏰ Zaman</span>
+                            <span class="detail-value">${timeAgo(signalTime)}</span>
+                        </div>
+                    </div>
+                    
+                    <div class="signal-description">
+                        ${signal.description}
+                    </div>
+                    
+                    <div class="signal-actions">
+                        <a href="https://www.gate.io/trade/${signal.symbol}" 
+                           target="_blank" class="action-btn btn-gateio">
+                            📈 Gate.io Futures
+                        </a>
+                        <a href="https://www.tradingview.com/chart/?symbol=GATEIO:${signal.symbol}" 
+                           target="_blank" class="action-btn btn-tradingview">
+                            📊 TradingView
+                        </a>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Fetch market overview
+        async function fetchMarketOverview() {
+            try {
+                const response = await fetch('/api/market_overview');
+                const data = await response.json();
+
+                // Top gainers
+                document.getElementById('top-gainers').innerHTML = 
+                    data.top_gainers.slice(0, 5).map(coin => `
+                        <div class="coin-item">
+                            <span class="coin-symbol">${coin.symbol}</span>
+                            <span class="coin-change positive">+${parseFloat(coin.priceChangePercent).toFixed(2)}%</span>
+                        </div>
+                    `).join('');
+
+                // Top losers  
+                document.getElementById('top-losers').innerHTML = 
+                    data.top_losers.slice(0, 5).map(coin => `
+                        <div class="coin-item">
+                            <span class="coin-symbol">${coin.symbol}</span>
+                            <span class="coin-change negative">${parseFloat(coin.priceChangePercent).toFixed(2)}%</span>
+                        </div>
+                    `).join('');
+
+                // Volume leaders
+                document.getElementById('volume-leaders').innerHTML = 
+                    data.volume_leaders.slice(0, 5).map(coin => `
+                        <div class="coin-item">
+                            <span class="coin-symbol">${coin.symbol}</span>
+                            <span class="coin-change">$${formatNumber(parseFloat(coin.quoteVolume))}</span>
+                        </div>
+                    `).join('');
+
+            } catch (error) {
+                console.error('Market overview hatası:', error);
+            }
+        }
+
+        // Update system status
+        function updateSystemStatus() {
+            document.getElementById('last-scan').textContent = 
+                lastUpdateTime ? timeAgo(lastUpdateTime) : 'Başlatılıyor...';
+            document.getElementById('system-status').textContent = '🟢 Aktif';
+            
+            lastUpdateTime = new Date();
+        }
+
+        // Initialize and set intervals
+        async function initialize() {
+            await fetchSignals();
+            await fetchMarketOverview();
+            updateSystemStatus();
+        }
+
+        // Auto refresh
+        setInterval(fetchSignals, 30000); // 30 saniye
+        setInterval(fetchMarketOverview, 60000); // 1 dakika
+        setInterval(updateSystemStatus, 5000); // 5 saniye
+
+        // Initial load
+        initialize();
+
+        // Visibility change handler
+        document.addEventListener('visibilitychange', function() {
+            if (!document.hidden) {
+                fetchSignals();
+            }
+        });
+    </script>
+</body>
+</html>
