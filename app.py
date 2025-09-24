@@ -23,6 +23,13 @@ app = Flask(__name__)
 # Logging ayarları
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+# ---------- CONFIG (kolayca değiştir) ----------
+MIN_VOLUME = int(os.getenv('MIN_VOLUME', 500000))         # 24h minimum hacim (USD) - dengeli
+MIN_CONFIDENCE = int(os.getenv('MIN_CONFIDENCE', 40))    # minimum confidence % (RSI 25/80 ile uyumlu)
+MAX_HOURLY_SIGNALS = int(os.getenv('MAX_HOURLY_SIGNALS', 3))
+EMAIL_COOLDOWN = int(os.getenv('EMAIL_COOLDOWN', 900))   # saniye cinsinden (default 15dk)
+SCAN_INTERVAL_MINUTES = int(os.getenv('SCAN_INTERVAL_MINUTES', 5))
+
 # ------------------ KEEP-ALIVE SİSTEMİ ------------------
 class KeepAliveService:
     def __init__(self, app_url=None):
@@ -157,94 +164,90 @@ class BalancedQualityAnalyzer:
             
             current_price = prices[-1]
             past_price = prices[-(period+1)]
+            if past_price == 0:
+                return 0
             momentum = ((current_price - past_price) / past_price) * 100
             return momentum
         except:
             return 0
 
     def calculate_confidence_score(self, rsi, volume_spike, change_percent, breakout_percent, momentum):
-        """GÜVEN SKORU HESAPLAMA"""
+        """GÜVEN SKORU HESAPLAMA - RSI yalnızca <=25 veya >=80 dikkate alınır"""
         try:
             confidence_factors = []
             total_score = 0
             
-            # RSI Güven Faktörü (25 puan)
-            if rsi:
-                if rsi <= 30 or rsi >= 70:  # Strong levels
+            # RSI Güven Faktörü (25 puan) - sadece STRONG seviyeler: <=25 veya >=80
+            if rsi is not None:
+                if rsi <= 25 or rsi >= 80:
                     rsi_score = 25
                     confidence_factors.append(f"RSI Strong Level ({rsi:.1f}) (+25)")
-                elif rsi <= 35 or rsi >= 65:  # Moderate levels
-                    rsi_score = 15
-                    confidence_factors.append(f"RSI Moderate Level ({rsi:.1f}) (+15)")
-                elif 40 <= rsi <= 60:  # Neutral momentum
-                    if abs(momentum) > 3:
-                        rsi_score = 10
-                        confidence_factors.append(f"RSI Neutral + Strong Momentum ({momentum:.1f}%) (+10)")
-                    else:
-                        rsi_score = 0
                 else:
                     rsi_score = 0
                 total_score += rsi_score
             
-            # Volume Güven Faktörü (25 puan)
-            if volume_spike:
-                if volume_spike >= 3.0:  # Güçlü
+            # Volume Güven Faktörü (25 puan) - daha duyarlı eşikler
+            if volume_spike is not None:
+                if volume_spike >= 2.0:
                     volume_score = 25
-                    confidence_factors.append(f"Strong Volume Spike {volume_spike:.1f}x (+25)")
-                elif volume_spike >= 2.0:  # Orta
+                    confidence_factors.append(f"Strong Volume Spike {volume_spike:.2f}x (+25)")
+                elif volume_spike >= 1.5:
                     volume_score = 18
-                    confidence_factors.append(f"Moderate Volume Spike {volume_spike:.1f}x (+18)")
-                elif volume_spike >= 1.5:  # Hafif
+                    confidence_factors.append(f"Moderate Volume Spike {volume_spike:.2f}x (+18)")
+                elif volume_spike >= 1.2:
                     volume_score = 10
-                    confidence_factors.append(f"Light Volume Spike {volume_spike:.1f}x (+10)")
+                    confidence_factors.append(f"Light Volume Spike {volume_spike:.2f}x (+10)")
                 else:
                     volume_score = 0
                 total_score += volume_score
             
-            # Fiyat Momentum Faktörü (20 puan)
-            if abs(change_percent) >= 5:  # Güçlü hareket
-                momentum_score = 20
-                confidence_factors.append(f"Strong Price Movement {abs(change_percent):.1f}% (+20)")
-            elif abs(change_percent) >= 3:  # Orta hareket
-                momentum_score = 12
-                confidence_factors.append(f"Moderate Price Movement {abs(change_percent):.1f}% (+12)")
-            elif abs(change_percent) >= 2:  # Hafif hareket
-                momentum_score = 8
-                confidence_factors.append(f"Light Price Movement {abs(change_percent):.1f}% (+8)")
-            else:
-                momentum_score = 0
-            total_score += momentum_score
+            # Fiyat Momentum Faktörü (20 puan) - change_percent daha duyarlı
+            if change_percent is not None:
+                if abs(change_percent) >= 4.0:
+                    momentum_score = 20
+                    confidence_factors.append(f"Strong Price Movement {abs(change_percent):.2f}% (+20)")
+                elif abs(change_percent) >= 2.5:
+                    momentum_score = 12
+                    confidence_factors.append(f"Moderate Price Movement {abs(change_percent):.2f}% (+12)")
+                elif abs(change_percent) >= 1.5:
+                    momentum_score = 8
+                    confidence_factors.append(f"Light Price Movement {abs(change_percent):.2f}% (+8)")
+                else:
+                    momentum_score = 0
+                total_score += momentum_score
             
-            # Breakout Güven Faktörü (15 puan)
-            if abs(breakout_percent) >= 2.5:  # Güçlü kırılım
-                breakout_score = 15
-                confidence_factors.append(f"Strong Breakout {abs(breakout_percent):.1f}% (+15)")
-            elif abs(breakout_percent) >= 1.5:  # Orta kırılım
-                breakout_score = 10
-                confidence_factors.append(f"Moderate Breakout {abs(breakout_percent):.1f}% (+10)")
-            elif abs(breakout_percent) >= 1.0:  # Hafif kırılım
-                breakout_score = 6
-                confidence_factors.append(f"Light Breakout {abs(breakout_percent):.1f}% (+6)")
-            else:
-                breakout_score = 0
-            total_score += breakout_score
+            # Breakout Güven Faktörü (15 puan) - daha duyarlı eşikler
+            if breakout_percent is not None:
+                if abs(breakout_percent) >= 1.5:
+                    breakout_score = 15
+                    confidence_factors.append(f"Strong Breakout {abs(breakout_percent):.2f}% (+15)")
+                elif abs(breakout_percent) >= 1.0:
+                    breakout_score = 10
+                    confidence_factors.append(f"Moderate Breakout {abs(breakout_percent):.2f}% (+10)")
+                elif abs(breakout_percent) >= 0.7:
+                    breakout_score = 6
+                    confidence_factors.append(f"Light Breakout {abs(breakout_percent):.2f}% (+6)")
+                else:
+                    breakout_score = 0
+                total_score += breakout_score
             
             # Momentum Güven Faktörü (15 puan)
-            if abs(momentum) >= 4:  # Güçlü momentum
-                mom_score = 15
-                confidence_factors.append(f"Strong Momentum {abs(momentum):.1f}% (+15)")
-            elif abs(momentum) >= 2.5:  # Orta momentum
-                mom_score = 10
-                confidence_factors.append(f"Moderate Momentum {abs(momentum):.1f}% (+10)")
-            elif abs(momentum) >= 1.5:  # Hafif momentum
-                mom_score = 5
-                confidence_factors.append(f"Light Momentum {abs(momentum):.1f}% (+5)")
-            else:
-                mom_score = 0
-            total_score += mom_score
+            if momentum is not None:
+                if abs(momentum) >= 3.5:
+                    mom_score = 15
+                    confidence_factors.append(f"Strong Momentum {abs(momentum):.2f}% (+15)")
+                elif abs(momentum) >= 2.0:
+                    mom_score = 10
+                    confidence_factors.append(f"Moderate Momentum {abs(momentum):.2f}% (+10)")
+                elif abs(momentum) >= 1.2:
+                    mom_score = 5
+                    confidence_factors.append(f"Light Momentum {abs(momentum):.2f}% (+5)")
+                else:
+                    mom_score = 0
+                total_score += mom_score
             
             # Final confidence calculation
-            confidence_percentage = min(total_score, 100)
+            confidence_percentage = min(int(total_score), 100)
             
             # Confidence level belirleme
             if confidence_percentage >= 75:
@@ -262,73 +265,54 @@ class BalancedQualityAnalyzer:
             
             return confidence_percentage, confidence_level, confidence_emoji, confidence_factors
             
-        except:
-            return 30, "LOW", "⚠️", ["Error in calculation"]
+        except Exception as e:
+            return 30, "LOW", "⚠️", [f"Error in calculation: {e}"]
 
     def is_quality_signal(self, rsi, volume_spike, change_percent, breakout_percent, momentum):
-        """DENGELI KALİTE SİNYAL KONTROLÜ - Günde 20-30 sinyal hedefi"""
+        """DENGELI KALİTE SİNYAL KONTROLÜ - RSI sadece 25/80 considered"""
         try:
             confidence_score, confidence_level, confidence_emoji, factors = self.calculate_confidence_score(
                 rsi, volume_spike, change_percent, breakout_percent, momentum
             )
             
-            # DENGELI EŞIK - Günde 20-30 sinyal için uygun
-            MIN_CONFIDENCE = 45  # %45 minimum güven (önceden 70)
-            
+            MIN_CONF = MIN_CONFIDENCE  # dış config'ten al
             quality_conditions = 0
             signal_reasons = []
             
-            # Condition 1: Strong RSI + Any volume
-            if rsi and ((rsi <= 30 and volume_spike >= 1.5) or (rsi >= 70 and volume_spike >= 1.5)):
+            # Condition 1: Strong RSI (<=25 veya >=80) + yeterli volume
+            if rsi is not None and (rsi <= 25 or rsi >= 80) and volume_spike is not None and volume_spike >= 1.3:
                 quality_conditions += 1
-                signal_reasons.append(f"Strong RSI ({rsi:.1f}) + Volume ({volume_spike:.1f}x)")
+                signal_reasons.append(f"Strong RSI ({rsi:.1f}) + Volume ({volume_spike:.2f}x)")
             
-            # Condition 2: Moderate RSI + Strong Volume
-            elif rsi and ((rsi <= 35 and volume_spike >= 2.0) or (rsi >= 65 and volume_spike >= 2.0)):
+            # Condition 2: Breakout + Volume
+            if breakout_percent is not None and abs(breakout_percent) >= 1.0 and volume_spike is not None and volume_spike >= 1.25:
                 quality_conditions += 1
-                signal_reasons.append(f"Moderate RSI + Strong Volume")
+                signal_reasons.append(f"Breakout ({abs(breakout_percent):.2f}%) + Volume")
             
-            # Condition 3: Breakout + Volume
-            if abs(breakout_percent) >= 1.5 and volume_spike >= 1.5:
+            # Condition 3: Strong Price Movement + Volume
+            if change_percent is not None and abs(change_percent) >= 3.0 and volume_spike is not None and volume_spike >= 1.2:
                 quality_conditions += 1
-                signal_reasons.append(f"Breakout ({abs(breakout_percent):.1f}%) + Volume")
+                signal_reasons.append(f"Strong Movement ({change_percent:.2f}%)")
             
-            # Condition 4: Strong Price Movement  
-            if abs(change_percent) >= 4 and volume_spike >= 1.3:
+            # Condition 4: Momentum ile desteklenen durum
+            if momentum is not None and abs(momentum) >= 3.0 and (rsi is None or (25 < rsi < 80)):
                 quality_conditions += 1
-                signal_reasons.append(f"Strong Movement ({change_percent:.1f}%)")
-            
-            # Condition 5: Strong Momentum + RSI
-            if abs(momentum) >= 3 and rsi and (45 <= rsi <= 55):
-                quality_conditions += 1
-                signal_reasons.append(f"Strong Momentum + Neutral RSI")
-            
-            # Condition 6: Multiple Moderate Factors
-            moderate_factors = 0
-            if rsi and (rsi <= 35 or rsi >= 65): moderate_factors += 1
-            if volume_spike and volume_spike >= 1.8: moderate_factors += 1  
-            if abs(change_percent) >= 2.5: moderate_factors += 1
-            if abs(breakout_percent) >= 1.0: moderate_factors += 1
-            if abs(momentum) >= 2: moderate_factors += 1
-            
-            if moderate_factors >= 2:
-                quality_conditions += 1
-                signal_reasons.append(f"Multiple Factors ({moderate_factors}/5)")
+                signal_reasons.append(f"Momentum Support ({momentum:.2f}%)")
             
             # FINAL DECISION
-            is_quality = (confidence_score >= MIN_CONFIDENCE and quality_conditions >= 1)
+            is_quality = (confidence_score >= MIN_CONF and quality_conditions >= 1)
             
             if is_quality:
-                # Sinyal türü belirleme
-                if rsi and rsi <= 30:
+                # Sinyal türü belirleme - öncelikli RSI
+                if rsi is not None and rsi <= 25:
                     signal_type = "RSI_OVERSOLD"
-                elif rsi and rsi >= 70:
+                elif rsi is not None and rsi >= 80:
                     signal_type = "RSI_OVERBOUGHT"
-                elif abs(breakout_percent) >= 2:
+                elif abs(breakout_percent) >= 1.0:
                     signal_type = "BREAKOUT"
-                elif volume_spike >= 2.5:
+                elif volume_spike is not None and volume_spike >= 2.0:
                     signal_type = "VOLUME_SPIKE"
-                elif abs(momentum) >= 3:
+                elif abs(momentum) >= 3.0:
                     signal_type = "MOMENTUM"
                 else:
                     signal_type = "MULTI_FACTOR"
@@ -428,7 +412,7 @@ class ImprovedEmailAlertService:
         self.receiver_email = os.getenv('RECEIVER_EMAIL', self.sender_email)
         self.last_alert_time = {}
         
-    def should_send_alert(self, symbol, signal_type, min_interval=900):  # 15 dakika
+    def should_send_alert(self, symbol, signal_type, min_interval=EMAIL_COOLDOWN):
         key = f"{symbol}_{signal_type}"
         current_time = time.time()
         if key in self.last_alert_time:
@@ -449,14 +433,15 @@ class ImprovedEmailAlertService:
             logging.info(f"Spam önleme: {symbol} {signal_type}")
             return
         
-        subject = f"📊 {alert_data['confidence_emoji']} {alert_data['direction']} {symbol} - {alert_data['confidence_level']} ({alert_data['confidence_score']}%)"
+        subject = f"📊 {alert_data.get('confidence_emoji','📊')} {alert_data['direction']} {symbol} - {alert_data['confidence_level']} ({alert_data['confidence_score']}%)"
         html_content = self._create_alert_html(alert_data)
         
         self._send_email(subject, html_content)
     
     def _create_alert_html(self, alert):
         direction_emoji = "📈" if alert['direction'] == 'LONG' else "📉"
-        confidence_color = "#00ff88" if alert['confidence_score'] >= 75 else "#ffd700" if alert['confidence_score'] >= 60 else "#ff8c42"
+        confidence_score = alert.get('confidence_score', 0)
+        confidence_color = "#00ff88" if confidence_score >= 75 else "#ffd700" if confidence_score >= 60 else "#ff8c42"
         
         html = f"""
         <!DOCTYPE html>
@@ -488,7 +473,7 @@ class ImprovedEmailAlertService:
                 </div>
                 
                 <div class="confidence-section">
-                    <div class="confidence-score">{alert['confidence_emoji']} {alert['confidence_score']}% {alert['confidence_level']}</div>
+                    <div class="confidence-score">{alert.get('confidence_emoji','📊')} {alert.get('confidence_score',0)}% {alert.get('confidence_level','LOW')}</div>
                     <div class="confidence-factors">
                         <strong>📊 Signal Analysis:</strong>
                         {'\n'.join([f'<div class="factor-item">• {factor}</div>' for factor in alert.get('confidence_factors', [])])}
@@ -536,7 +521,7 @@ class ImprovedEmailAlertService:
                     <h3>📊 TECHNICAL DATA</h3>
                     <div class="level-row">
                         <span>Signal Type:</span>
-                        <span style="font-weight: bold;">{alert['signal_type'].replace('_', ' ')}</span>
+                        <span style="font-weight: bold;">{alert.get('signal_type','UNKNOWN').replace('_',' ')}</span>
                     </div>
                     <div class="level-row">
                         <span>RSI:</span>
@@ -558,11 +543,11 @@ class ImprovedEmailAlertService:
                 
                 <div style="background: rgba(0,0,0,0.2); padding: 15px; border-radius: 8px; margin: 15px 0;">
                     <h4>🎯 Signal Description:</h4>
-                    <p>{alert['description']}</p>
+                    <p>{alert.get('description','')}</p>
                 </div>
                 
                 <div class="warning">
-                    <strong>⚠️ TRADING UYARISI:</strong> Bu sinyal %{alert['confidence_score']} güven seviyesine sahiptir. 
+                    <strong>⚠️ TRADING UYARISI:</strong> Bu sinyal %{alert.get('confidence_score',0)} güven seviyesine sahiptir. 
                     Risk yönetimi uygulayın ve stop-loss kullanın!
                 </div>
             </div>
@@ -677,8 +662,7 @@ class BalancedFuturesMonitor:
             price = self.safe_convert(ticker.get('last'))
             change_percent = self.safe_convert(ticker.get('change_percentage'))
             
-            # DENGELI HACIM FİLTRESİ - Günde 20-30 sinyal için uygun
-            MIN_VOLUME = 800000  # 800K USD (önceden 2M)
+            # DENGELI HACIM FİLTRESİ - kullan config MIN_VOLUME
             if volume_24h < MIN_VOLUME or price <= 0:
                 return None
             
@@ -711,19 +695,23 @@ class BalancedFuturesMonitor:
             # Trading seviyelerini hesapla
             trading_levels = analyzer.calculate_trading_levels(price, signal_type, confidence_score)
             
+            # confidence emoji from level
+            emoji_map = {"VERY HIGH":"🔥", "HIGH":"⭐", "MEDIUM":"📊", "LOW":"⚠️"}
+            confidence_emoji = emoji_map.get(confidence_level, "📊")
+            
             return {
                 'symbol': contract.replace('_USDT', 'USDT'),
                 'price': price,
                 'change_percent': change_percent,
                 'signal_type': signal_type,
                 'description': description,
-                'rsi': rsi if rsi else 50,
-                'volume_spike': volume_spike if volume_spike else 1,
+                'rsi': rsi if rsi is not None else 50,
+                'volume_spike': volume_spike if volume_spike is not None else 1,
                 'volume_24h': volume_24h,
                 'momentum': momentum,
                 'confidence_score': confidence_score,
                 'confidence_level': confidence_level,
-                'confidence_emoji': confidence_factors[0] if confidence_factors else "📊",
+                'confidence_emoji': confidence_emoji,
                 'confidence_factors': confidence_factors,
                 'timestamp': datetime.now().isoformat(),
                 'direction': trading_levels['direction'],
@@ -739,18 +727,18 @@ class BalancedFuturesMonitor:
             return None
     
     def scan_futures_market(self):
-        """DENGELI piyasa taraması - Günde 20-30 sinyal"""
+        """DENGELI piyasa taraması - config ile uyumlu"""
         self.reset_hourly_counter()
         
-        # Saatlik spam koruması - Maksimum 2-3 sinyal/saat
-        MAX_HOURLY_SIGNALS = 3
+        # Saatlik spam koruması - Maksimum configurable sinyal/saat
+        MAX_HOURLY = MAX_HOURLY_SIGNALS
         current_hour_count = self.hourly_signal_count[datetime.now().hour]
         
-        if current_hour_count >= MAX_HOURLY_SIGNALS:
-            logging.info(f"📊 Saatlik sinyal limiti ({MAX_HOURLY_SIGNALS}) doldu. Saat: {datetime.now().hour}:xx")
+        if current_hour_count >= MAX_HOURLY:
+            logging.info(f"📊 Saatlik sinyal limiti ({MAX_HOURLY}) doldu. Saat: {datetime.now().hour}:xx")
             return
         
-        logging.info("📊 Dengeli Futures taraması başlıyor (Günde 20-30 sinyal hedefi)...")
+        logging.info("📊 Dengeli Futures taraması başlıyor...")
         
         # Kontratları güncelle
         if not self.get_futures_contracts():
@@ -773,9 +761,9 @@ class BalancedFuturesMonitor:
         for ticker in tickers:
             total_checked += 1
             
-            # DENGELI hacim kontrolü
+            # DENGELI hacim kontrolü (config)
             volume_24h = self.safe_convert(ticker.get('volume_24h'))
-            if volume_24h < 800000:  # 800K USD
+            if volume_24h < MIN_VOLUME:
                 volume_filtered += 1
                 continue
             
@@ -793,8 +781,8 @@ class BalancedFuturesMonitor:
                     logging.error(f"Email gönderme hatası: {e}")
                 
                 # Saatlik limite ulaştık mı?
-                if self.hourly_signal_count[datetime.now().hour] >= MAX_HOURLY_SIGNALS:
-                    logging.info(f"🕐 Saatlik limit ({MAX_HOURLY_SIGNALS}) tamamlandı!")
+                if self.hourly_signal_count[datetime.now().hour] >= MAX_HOURLY:
+                    logging.info(f"🕐 Saatlik limit ({MAX_HOURLY}) tamamlandı!")
                     break
         
         self.active_signals = new_signals
@@ -808,7 +796,7 @@ scheduler = BackgroundScheduler()
 scheduler.add_job(
     balanced_futures_monitor.scan_futures_market, 
     'interval', 
-    minutes=5,  # 5 dakikada bir - dengeli
+    minutes=SCAN_INTERVAL_MINUTES,  # config ile
     id='balanced_futures_scan'
 )
 scheduler.start()
@@ -863,20 +851,18 @@ def test_email():
         'price': 45234.56,
         'change_percent': 4.2,
         'signal_type': 'RSI_OVERSOLD',
-        'description': '⭐ Quality Signal: Strong RSI (28.3) + Volume (2.1x) + Light Price Movement 4.2% (+8)',
-        'rsi': 28.3,
+        'description': '⭐ Quality Signal: Strong RSI (24.5) + Volume (2.1x) + Light Price Movement 4.2%',
+        'rsi': 24.5,
         'volume_spike': 2.1,
         'volume_24h': 1250000000,
         'momentum': 3.8,
-        'confidence_score': 68,
+        'confidence_score': 78,
         'confidence_level': 'HIGH',
         'confidence_emoji': '⭐',
         'confidence_factors': [
-            'RSI Strong Level (28.3) (+25)',
-            'Moderate Volume Spike 2.1x (+18)',
-            'Moderate Price Movement 4.2% (+12)',
-            'Light Breakout 1.2% (+6)',
-            'Strong Momentum 3.8% (+15)'
+            'RSI Strong Level (24.5) (+25)',
+            'Strong Volume Spike 2.10x (+25)',
+            'Moderate Price Movement 4.20% (+12)'
         ],
         'timestamp': datetime.now().isoformat(),
         'direction': 'LONG',
@@ -895,29 +881,22 @@ def test_email():
 def system_status():
     current_hour = datetime.now().hour
     return jsonify({
-        "system": "Balanced Gate.io Futures Monitor v2.5 - Dengeli Kalite",
+        "system": "Balanced Gate.io Futures Monitor v2.5 - Dengeli Kalite (RSI 25/80)",
         "keepalive_active": keep_alive_service.is_running,
         "email_configured": bool(email_service.sender_email and email_service.sender_password),
         "scanner_active": scheduler.running,
-        "scan_interval": "5 dakika",
+        "scan_interval": f"{SCAN_INTERVAL_MINUTES} dakika",
         "active_signals_count": len(balanced_futures_monitor.active_signals),
-        "hourly_signal_count": f"{balanced_futures_monitor.hourly_signal_count[current_hour]}/3",
-        "volume_filter": "800K USD minimum (Dengeli)",
+        "hourly_signal_count": f"{balanced_futures_monitor.hourly_signal_count[current_hour]}/{MAX_HOURLY_SIGNALS}",
+        "volume_filter": f"{MIN_VOLUME} USD minimum (Dengeli)",
         "data_source": "Gate.io Futures API",
         "contracts_count": len(balanced_futures_monitor.futures_contracts),
         "balanced_criteria": {
-            "min_confidence": "45% (Dengeli Seçicilik)",
-            "min_volume": "800K USD",
-            "max_hourly_signals": "3 (Saatlik Limit)",
-            "daily_target": "20-30 kalite sinyal",
-            "email_cooldown": "15 dakika",
-            "technical_analysis": "5-faktör weighted scoring"
-        },
-        "signal_distribution": {
-            "target_per_day": "20-30",
-            "target_per_hour": "1-3",
-            "quality_focus": "Balanced confidence scoring",
-            "spam_protection": "Hourly limits + email cooldown"
+            "min_confidence": f"{MIN_CONFIDENCE}% (RSI 25/80 öncelikli)",
+            "min_volume": f"{MIN_VOLUME} USD",
+            "max_hourly_signals": f"{MAX_HOURLY_SIGNALS} (Saatlik Limit)",
+            "email_cooldown": f"{EMAIL_COOLDOWN} saniye",
+            "technical_analysis": "RSI (25/80) + Volume + Breakout + Momentum"
         }
     })
 
@@ -928,8 +907,8 @@ def keepalive_endpoint():
         'timestamp': time.time(),
         'system': 'Balanced Gate.io Futures Active',
         'signals': len(balanced_futures_monitor.active_signals),
-        'hourly_count': f"{balanced_futures_monitor.hourly_signal_count[datetime.now().hour]}/3",
-        'version': 'Balanced 2.5'
+        'hourly_count': f"{balanced_futures_monitor.hourly_signal_count[datetime.now().hour]}/{MAX_HOURLY_SIGNALS}",
+        'version': 'Balanced 2.5 (RSI 25/80)'
     }, 200
 
 @app.route('/manual_scan')
@@ -940,10 +919,10 @@ def manual_scan():
         return jsonify({
             "message": "Dengeli manuel tarama tamamlandı",
             "active_signals": len(balanced_futures_monitor.active_signals),
-            "hourly_signal_count": f"{balanced_futures_monitor.hourly_signal_count[datetime.now().hour]}/3",
+            "hourly_signal_count": f"{balanced_futures_monitor.hourly_signal_count[datetime.now().hour]}/{MAX_HOURLY_SIGNALS}",
             "signals": balanced_futures_monitor.active_signals,
             "scan_time": datetime.now().isoformat(),
-            "quality": "DENGELI - Günde 20-30 hedef"
+            "quality": "DENGELI - RSI 25/80 öncelikli"
         })
     except Exception as e:
         return jsonify({
@@ -1001,22 +980,20 @@ def signal_stats():
                 "low_below_45": len([s for s in confidence_scores if s < 45])
             },
             "hourly_count": dict(balanced_futures_monitor.hourly_signal_count),
-            "system_target": "20-30 signals/day"
+            "system_target": "20-30 signals/day (configurable)"
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    print("📊 Balanced Gate.io Futures Monitor v2.5 başlatılıyor...")
-    print("🎯 DENGELI KALİTE SİSTEMİ:")
-    print("   - Günlük hedef: 20-30 kalite sinyal")
-    print("   - Saatlik limit: Maksimum 3 sinyal")
-    print("   - Minimum güven: %45 (dengeli)")
-    print("   - Minimum hacim: 800K USD")
-    print("   - Email spam koruması: 15 dakika")
-    print("   - Tarama aralığı: 5 dakika")
-    print("   - 5 faktörlü confidence scoring")
-    print("   - Otomatik saatlik reset")
+    print("📊 Balanced Gate.io Futures Monitor v2.5 (RSI 25/80) başlatılıyor...")
+    print("🎯 DENGELI KALİTE SİSTEMİ (özet):")
+    print(f"   - RSI strong thresholds: <=25 (oversold) or >=80 (overbought)")
+    print(f"   - Minimum confidence: {MIN_CONFIDENCE}%")
+    print(f"   - Minimum hacim: {MIN_VOLUME} USD")
+    print(f"   - Saatlik limit: {MAX_HOURLY_SIGNALS}")
+    print(f"   - Email cooldown: {EMAIL_COOLDOWN} saniye")
+    print(f"   - Tarama aralığı: {SCAN_INTERVAL_MINUTES} dakika")
     
     port = int(os.environ.get('PORT', 5000))
     app.run(debug=False, host='0.0.0.0', port=port)
