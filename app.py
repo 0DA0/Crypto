@@ -483,7 +483,7 @@ scheduler = BackgroundScheduler()
 scheduler.add_job(
     futures_monitor.analyze_rsi_signals, 
     'interval', 
-    minutes=3,  # 3 dakikada bir tarama (daha sık)
+    minutes=2,  # 2 dakikada bir tarama (daha sık)
     id='rsi_scan'
 )
 scheduler.start()
