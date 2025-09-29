@@ -409,9 +409,9 @@ class FastFuturesMonitor:
             volume_filtered = 0
             rsi_signals = 0
             
-            # Volume'a göre sırala ve SADECE İLK 150 COİN'İ TARA (hız için)
+            # Volume'a göre sırala ve SADECE İLK 100 COİN'İ TARA (hız için, eskiden 150 idi)
             tickers.sort(key=lambda x: self.safe_float(x.get('volume_24h', 0)), reverse=True)
-            tickers = tickers[:150]  # Sadece top 150 coin
+            tickers = tickers[:100]  # Hız optimizasyonu: 100 coin
             
             for ticker in tickers:
                 total_checked += 1
@@ -478,7 +478,7 @@ class FastFuturesMonitor:
             self.active_signals = new_signals
             
             elapsed_time = time.time() - start_time
-            logging.info(f"✅ Tarama OK: {total_checked} coin, {volume_filtered} düşük hacim, {rsi_signals} RSI sinyal - {elapsed_time:.1f}s")
+            logging.info(f"✅ Tarama OK: {total_checked} coin, {volume_filtered} düşük hacim, {rsi_signals} RSI sinyal - Süre: {elapsed_time:.1f}s")
             
             if rsi_signals == 0:
                 logging.info("ℹ️ RSI sinyali yok (RSI ≤30 veya ≥80)")
@@ -494,7 +494,7 @@ scheduler = BackgroundScheduler()
 scheduler.add_job(
     futures_monitor.analyze_rsi_signals, 
     'interval', 
-    minutes=3,  # 3 dakika - daha uzun aralık (çakışma önleme)
+    minutes=5,  # Düzeltme: 5 dakika (eskiden 3, çakışma önleme için artırıldı)
     id='rsi_scan',
     max_instances=1  # Sadece 1 instance çalışsın
 )
@@ -571,7 +571,7 @@ def system_status():
         "email_configured": bool(email_service.sender_email and email_service.sender_password),
         "scanner_active": scheduler.running,
         "is_scanning": futures_monitor.is_scanning,
-        "scan_interval": "3 minutes",
+        "scan_interval": "5 minutes",  # Güncellendi
         "active_rsi_signals": len(futures_monitor.active_signals),
         "futures_contracts_loaded": len(futures_monitor.futures_contracts),
         "criteria": {
@@ -580,13 +580,13 @@ def system_status():
             "minimum_volume": "1M USD",
             "email_cooldown": "10 minutes per coin",
             "candlestick_interval": "1 minute",
-            "scan_limit": "Top 150 coins (hız optimizasyonu)"
+            "scan_limit": "Top 100 coins (hız optimizasyonu)"  # Güncellendi
         },
         "optimizations": {
             "scan_overlap_prevention": "Enabled",
             "max_scan_instances": "1",
             "timeout_protection": "8s per request",
-            "top_coins_only": "150"
+            "top_coins_only": "100"  # Güncellendi
         }
     })
 
