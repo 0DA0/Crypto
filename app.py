@@ -77,10 +77,10 @@ class KeepAliveService:
 keep_alive_service = KeepAliveService()
 keep_alive_service.start()
 
-# ------------------ SIMPLE RSI ANALYZER ------------------
-class SimpleRSIAnalyzer:
+# ------------------ FAST RSI ANALYZER ------------------
+class FastRSIAnalyzer:
     def __init__(self):
-        self.price_history = defaultdict(lambda: deque(maxlen=30))  # 30 fiyat yeterli RSI için
+        self.price_history = defaultdict(lambda: deque(maxlen=30))
         
     def add_price_data(self, symbol, price):
         """Fiyat verisi ekle"""
@@ -115,36 +115,45 @@ class SimpleRSIAnalyzer:
             rsi = 100 - (100 / (1 + rs))
             
             return rsi
-        except Exception as e:
-            logging.error(f"RSI hesaplama hatası {symbol}: {e}")
+        except:
             return None
     
     def is_rsi_extreme(self, rsi):
-        """RSI extreme seviyede mi kontrol et"""
+        """RSI extreme seviyede mi kontrol et - Daha esnek"""
         if rsi is None:
             return False, None
             
-        if rsi >= 85:
+        # Daha geniş range - Daha fazla sinyal
+        if rsi >= 80:  # 85 yerine 80
             return True, "OVERBOUGHT"
-        elif rsi <= 25:
+        elif rsi <= 30:  # 25 yerine 30
             return True, "OVERSOLD"
         else:
             return False, None
 
-rsi_analyzer = SimpleRSIAnalyzer()
+rsi_analyzer = FastRSIAnalyzer()
 
 # ------------------ EMAIL ALERT SİSTEMİ ------------------
-class SimpleEmailService:
+class FastEmailService:
     def __init__(self):
         self.smtp_server = "smtp.gmail.com"
         self.port = 587
         self.sender_email = os.getenv('GMAIL_USER')
         self.sender_password = os.getenv('GMAIL_PASSWORD')
         self.receiver_email = os.getenv('RECEIVER_EMAIL', self.sender_email)
+        self.last_alert_time = {}
         
-    def should_send_alert(self, symbol, signal_type):
-        """Cooldown kaldırıldı - Her RSI extreme sinyalini gönder"""
-        return True  # Her zaman True döndür
+    def should_send_alert(self, symbol, signal_type, min_interval=600):  # 10 dakika cooldown (spam önleme)
+        """Minimal cooldown - 10 dakika"""
+        key = f"{symbol}_{signal_type}"
+        current_time = time.time()
+        
+        if key in self.last_alert_time:
+            if current_time - self.last_alert_time[key] < min_interval:
+                return False
+        
+        self.last_alert_time[key] = current_time
+        return True
     
     def send_rsi_alert(self, alert_data):
         """RSI sinyali email gönder"""
@@ -156,7 +165,7 @@ class SimpleEmailService:
         signal_type = alert_data['signal_type']
         
         if not self.should_send_alert(symbol, signal_type):
-            logging.info(f"Her RSI extreme sinyal gönderiliyor: {symbol} {signal_type}")
+            logging.info(f"Email cooldown (10dk): {symbol} {signal_type}")
             return
         
         # Email konu
@@ -213,7 +222,7 @@ class SimpleEmailService:
                 <div class="header">
                     <div class="symbol">{signal_emoji} {alert['symbol']}</div>
                     <div class="rsi-alert">
-                        <div class="signal-type">RSI EXTREME - {signal_text}</div>
+                        <div class="signal-type">RSI SIGNAL - {signal_text}</div>
                         <div class="rsi-value">RSI {alert['rsi']:.1f}</div>
                     </div>
                 </div>
@@ -229,7 +238,7 @@ class SimpleEmailService:
                         <span>${alert['price']:.4f}</span>
                     </div>
                     <div class="data-row">
-                        <span><strong>RSI Seviyesi:</strong></span>
+                        <span><strong>RSI:</strong></span>
                         <span style="color: {signal_color}; font-weight: bold;">{alert['rsi']:.2f}</span>
                     </div>
                     <div class="data-row">
@@ -248,31 +257,26 @@ class SimpleEmailService:
                 
                 <div style="text-align: center; margin: 30px 0;">
                     <a href="https://www.gate.io/futures_trade/{alert['symbol']}" class="btn btn-gate">
-                        🚀 Gate.io'da Aç
+                        🚀 Gate.io Futures
                     </a>
                     <a href="https://www.tradingview.com/chart/?symbol=GATEIO:{alert['symbol']}" class="btn btn-tv">
-                        📈 TradingView'da Gör
+                        📈 TradingView
                     </a>
                 </div>
                 
                 <div class="data-section">
                     <h3>🎯 RSI ANALİZİ</h3>
-                    <p><strong>Sinyal Türü:</strong> {alert['signal_description']}</p>
-                    <p><strong>RSI Seviyesi:</strong> {alert['rsi']:.2f} ({"Extreme Oversold" if alert['signal_type'] == 'OVERSOLD' else "Extreme Overbought"})</p>
-                    <p><strong>Önerilen Yön:</strong> {direction}</p>
-                    <p><strong>Güvenilirlik:</strong> Yüksek (RSI extreme seviyelerde)</p>
-                    <p><strong>RSI Hesaplama:</strong> 1 dakikalık mumlar (hassas)</p>
+                    <p><strong>Sinyal:</strong> {alert['signal_description']}</p>
+                    <p><strong>RSI:</strong> {alert['rsi']:.2f} ({"Oversold" if alert['signal_type'] == 'OVERSOLD' else "Overbought"})</p>
+                    <p><strong>Yön:</strong> {direction}</p>
+                    <p><strong>1 dakikalık RSI ile hassas hesaplama</strong></p>
                 </div>
                 
                 <div class="warning">
-                    <h3>⚠️ ÖNEMLİ UYARI</h3>
-                    <p><strong>RSI Extreme Sinyali:</strong></p>
-                    <p>• RSI {alert['rsi']:.1f} seviyesinde - {"Aşırı satılmış" if alert['signal_type'] == 'OVERSOLD' else "Aşırı alınmış"} bölge</p>
-                    <p>• {"Güçlü geri dönüş potansiyeli" if alert['signal_type'] == 'OVERSOLD' else "Düzeltme beklentisi"}</p>
-                    <p>• 1 dakikalık RSI ile hassas hesaplama</p>
-                    <p>• Cooldown yok - Her extreme sinyal bildirilir</p>
+                    <h3>⚠️ UYARI</h3>
+                    <p>• RSI {alert['rsi']:.1f} - {"Aşırı satılmış" if alert['signal_type'] == 'OVERSOLD' else "Aşırı alınmış"}</p>
+                    <p>• 10 dakika email cooldown</p>
                     <p>• Risk yönetimi uygulayın</p>
-                    <p>• Bu sadece teknik analiz - yatırım tavsiyesi değil</p>
                 </div>
             </div>
         </body>
@@ -297,19 +301,20 @@ class SimpleEmailService:
                 server.login(self.sender_email, self.sender_password)
                 server.send_message(message)
                 
-            logging.info(f"✅ RSI Alert email sent: {subject}")
+            logging.info(f"✅ RSI email gönderildi: {subject}")
             
         except Exception as e:
-            logging.error(f"❌ Email gönderme hatası: {e}")
+            logging.error(f"❌ Email hatası: {e}")
 
-email_service = SimpleEmailService()
+email_service = FastEmailService()
 
-# ------------------ FUTURES MONITOR ------------------
-class SimpleFuturesMonitor:
+# ------------------ FAST FUTURES MONITOR ------------------
+class FastFuturesMonitor:
     def __init__(self):
         self.active_signals = []
         self.gateio_base_url = "https://api.gateio.ws/api/v4"
         self.futures_contracts = set()
+        self.is_scanning = False  # Çakışma önleme
         
     def safe_float(self, value, default=0.0):
         """Güvenli float dönüştürme"""
@@ -323,172 +328,179 @@ class SimpleFuturesMonitor:
     def get_futures_contracts(self):
         """Futures kontratlarını al"""
         try:
-            response = requests.get(f"{self.gateio_base_url}/futures/usdt/contracts", timeout=15)
+            response = requests.get(f"{self.gateio_base_url}/futures/usdt/contracts", timeout=10)
             if response.status_code == 200:
                 contracts = response.json()
-                # Sadece aktif USDT kontratları
                 self.futures_contracts = {
                     c.get('name', '') for c in contracts 
                     if c.get('in_delisting') == False and c.get('name', '').endswith('_USDT')
                 }
-                logging.info(f"✅ {len(self.futures_contracts)} futures kontratı yüklendi")
+                logging.info(f"✅ {len(self.futures_contracts)} kontrat yüklendi")
                 return True
-            else:
-                logging.error(f"Kontrat API hatası: {response.status_code}")
-                return False
+            return False
         except Exception as e:
-            logging.error(f"Kontrat alma hatası: {e}")
+            logging.error(f"Kontrat hatası: {e}")
             return False
     
     def get_futures_tickers(self):
         """Futures ticker verilerini al"""
         try:
-            response = requests.get(f"{self.gateio_base_url}/futures/usdt/tickers", timeout=15)
+            response = requests.get(f"{self.gateio_base_url}/futures/usdt/tickers", timeout=10)
             if response.status_code == 200:
                 data = response.json()
-                # Sadece bilinen kontratları filtrele
                 filtered_data = [
                     t for t in data 
                     if t.get('contract', '') in self.futures_contracts
                 ]
-                logging.info(f"✅ {len(filtered_data)} ticker verisi alındı")
+                logging.info(f"✅ {len(filtered_data)} ticker alındı")
                 return filtered_data
-            else:
-                logging.error(f"Ticker API hatası: {response.status_code}")
-                return []
+            return []
         except Exception as e:
-            logging.error(f"Ticker alma hatası: {e}")
+            logging.error(f"Ticker hatası: {e}")
             return []
     
     def get_candlestick_data(self, contract, limit=20):
-        """Mum verilerini al (RSI için) - 1 dakikalık mumlar"""
+        """Mum verilerini al - 1 dakikalık"""
         try:
             params = {
                 'contract': contract,
-                'interval': '1m',  # 1 dakikalık mumlar
+                'interval': '1m',
                 'limit': limit
             }
             response = requests.get(
                 f"{self.gateio_base_url}/futures/usdt/candlesticks", 
                 params=params, 
-                timeout=15
+                timeout=8
             )
             if response.status_code == 200:
                 return response.json()
             return []
-        except Exception as e:
-            logging.error(f"Candlestick data hatası {contract}: {e}")
+        except:
             return []
     
     def analyze_rsi_signals(self):
-        """RSI sinyallerini analiz et"""
-        logging.info("🔍 RSI Extreme sinyalleri taranıyor...")
+        """RSI sinyallerini analiz et - HIZLI VERSİYON"""
         
-        # Kontratları güncelle
-        if not self.get_futures_contracts():
-            logging.error("Kontratlar alınamadı, taramaya devam edilemiyor")
+        # Çakışma önleme
+        if self.is_scanning:
+            logging.warning("⚠️ Tarama devam ediyor, yeni tarama atlandı")
             return
         
-        # Ticker verilerini al
-        tickers = self.get_futures_tickers()
-        if not tickers:
-            logging.error("Ticker verileri alınamadı")
-            return
+        self.is_scanning = True
         
-        new_signals = []
-        total_checked = 0
-        volume_filtered = 0
-        rsi_signals_found = 0
-        
-        # Volume'a göre sırala (büyükten küçüğe)
-        tickers.sort(key=lambda x: self.safe_float(x.get('volume_24h', 0)), reverse=True)
-        
-        for ticker in tickers:
-            total_checked += 1
+        try:
+            logging.info("🔍 HIZLI RSI taraması başlıyor...")
+            start_time = time.time()
             
-            contract = ticker.get('contract', '')
-            volume_24h = self.safe_float(ticker.get('volume_24h'))
-            price = self.safe_float(ticker.get('last'))
-            change_24h = self.safe_float(ticker.get('change_percentage'))
+            # Kontratları güncelle
+            if not self.futures_contracts:
+                if not self.get_futures_contracts():
+                    logging.error("Kontratlar alınamadı")
+                    return
             
-            # Volume filtresi - Minimum 1M USD
-            if volume_24h < 1000000:
-                volume_filtered += 1
-                continue
+            # Ticker verilerini al
+            tickers = self.get_futures_tickers()
+            if not tickers:
+                logging.error("Ticker alınamadı")
+                return
+            
+            new_signals = []
+            total_checked = 0
+            volume_filtered = 0
+            rsi_signals = 0
+            
+            # Volume'a göre sırala ve SADECE İLK 150 COİN'İ TARA (hız için)
+            tickers.sort(key=lambda x: self.safe_float(x.get('volume_24h', 0)), reverse=True)
+            tickers = tickers[:150]  # Sadece top 150 coin
+            
+            for ticker in tickers:
+                total_checked += 1
                 
-            # Fiyat kontrolü
-            if price <= 0:
-                continue
-            
-            # Mum verilerini al
-            candles = self.get_candlestick_data(contract, limit=20)
-            if len(candles) < 15:  # Yeterli veri yok
-                continue
-            
-            # Fiyat verilerini RSI analyzer'a ekle
-            for candle in candles:
-                try:
-                    if len(candle) >= 5:
-                        close_price = self.safe_float(candle[4])  # Close price
-                        if close_price > 0:
-                            rsi_analyzer.add_price_data(contract, close_price)
-                except:
+                contract = ticker.get('contract', '')
+                volume_24h = self.safe_float(ticker.get('volume_24h'))
+                price = self.safe_float(ticker.get('last'))
+                change_24h = self.safe_float(ticker.get('change_percentage'))
+                
+                # Volume filtresi - 1M USD
+                if volume_24h < 1000000:
+                    volume_filtered += 1
                     continue
-            
-            # RSI hesapla
-            rsi_value = rsi_analyzer.calculate_rsi(contract)
-            if rsi_value is None:
-                continue
-            
-            # RSI extreme kontrolü
-            is_extreme, signal_type = rsi_analyzer.is_rsi_extreme(rsi_value)
-            
-            if is_extreme:
-                rsi_signals_found += 1
                 
-                # Sinyal detayları
-                signal_data = {
-                    'symbol': contract.replace('_USDT', 'USDT'),
-                    'price': price,
-                    'rsi': rsi_value,
-                    'signal_type': signal_type,
-                    'change_24h': change_24h,
-                    'volume_24h': volume_24h,
-                    'timestamp': datetime.now().isoformat(),
-                    'signal_description': f"RSI {rsi_value:.1f} - {'Aşırı satılmış, güçlü alım fırsatı' if signal_type == 'OVERSOLD' else 'Aşırı alınmış, düzeltme beklentisi'}"
-                }
+                if price <= 0:
+                    continue
                 
-                new_signals.append(signal_data)
+                # Mum verilerini al
+                candles = self.get_candlestick_data(contract, limit=20)
+                if len(candles) < 15:
+                    continue
                 
-                # Email gönder (cooldown yok, her sinyal gönderilir)
-                try:
-                    email_service.send_rsi_alert(signal_data)
-                    logging.info(f"🎯 RSI EXTREME SIGNAL: {signal_data['symbol']} - RSI {rsi_value:.1f} ({signal_type}) - Volume: ${volume_24h/1000000:.1f}M")
-                except Exception as e:
-                    logging.error(f"Email gönderme hatası: {e}")
+                # Fiyat verilerini ekle
+                for candle in candles:
+                    try:
+                        if len(candle) >= 5:
+                            close_price = self.safe_float(candle[4])
+                            if close_price > 0:
+                                rsi_analyzer.add_price_data(contract, close_price)
+                    except:
+                        continue
+                
+                # RSI hesapla
+                rsi_value = rsi_analyzer.calculate_rsi(contract)
+                if rsi_value is None:
+                    continue
+                
+                # RSI extreme kontrolü (30/80)
+                is_extreme, signal_type = rsi_analyzer.is_rsi_extreme(rsi_value)
+                
+                if is_extreme:
+                    rsi_signals += 1
+                    
+                    signal_data = {
+                        'symbol': contract.replace('_USDT', 'USDT'),
+                        'price': price,
+                        'rsi': rsi_value,
+                        'signal_type': signal_type,
+                        'change_24h': change_24h,
+                        'volume_24h': volume_24h,
+                        'timestamp': datetime.now().isoformat(),
+                        'signal_description': f"RSI {rsi_value:.1f} - {'Oversold - Alım fırsatı' if signal_type == 'OVERSOLD' else 'Overbought - Satış sinyali'}"
+                    }
+                    
+                    new_signals.append(signal_data)
+                    
+                    # Email gönder
+                    try:
+                        email_service.send_rsi_alert(signal_data)
+                        logging.info(f"🎯 RSI SIGNAL: {signal_data['symbol']} - RSI {rsi_value:.1f} ({signal_type}) - ${volume_24h/1000000:.1f}M")
+                    except Exception as e:
+                        logging.error(f"Email hatası: {e}")
+            
+            self.active_signals = new_signals
+            
+            elapsed_time = time.time() - start_time
+            logging.info(f"✅ Tarama OK: {total_checked} coin, {volume_filtered} düşük hacim, {rsi_signals} RSI sinyal - {elapsed_time:.1f}s")
+            
+            if rsi_signals == 0:
+                logging.info("ℹ️ RSI sinyali yok (RSI ≤30 veya ≥80)")
         
-        # Sonuçları kaydet
-        self.active_signals = new_signals
-        
-        logging.info(f"✅ RSI tarama tamamlandı: {total_checked} kontrol, {volume_filtered} düşük hacim, {rsi_signals_found} RSI EXTREME sinyal")
-        
-        if rsi_signals_found == 0:
-            logging.info("ℹ️ RSI extreme seviyesinde sinyal bulunamadı (RSI ≤25 veya ≥85)")
+        finally:
+            self.is_scanning = False
 
 # Monitor instance
-futures_monitor = SimpleFuturesMonitor()
+futures_monitor = FastFuturesMonitor()
 
 # ------------------ SCHEDULER ------------------
 scheduler = BackgroundScheduler()
 scheduler.add_job(
     futures_monitor.analyze_rsi_signals, 
     'interval', 
-    minutes=2,  # 2 dakikada bir tarama (daha sık)
-    id='rsi_scan'
+    minutes=3,  # 3 dakika - daha uzun aralık (çakışma önleme)
+    id='rsi_scan',
+    max_instances=1  # Sadece 1 instance çalışsın
 )
 scheduler.start()
 
-# İlk taramayı başlat
+# İlk tarama
 threading.Timer(20.0, futures_monitor.analyze_rsi_signals).start()
 
 # ------------------ ROUTES ------------------
@@ -498,12 +510,10 @@ def index():
 
 @app.route('/api/signals')
 def get_signals():
-    """Aktif RSI sinyalleri"""
     return jsonify(futures_monitor.active_signals)
 
 @app.route('/api/market_overview')
 def market_overview():
-    """Piyasa genel görünümü"""
     tickers = futures_monitor.get_futures_tickers()
     
     safe_tickers = []
@@ -513,7 +523,7 @@ def market_overview():
             volume_24h = futures_monitor.safe_float(t.get('volume_24h'))
             contract = t.get('contract', '')
             
-            if contract and volume_24h >= 1000000:  # 1M+ volume
+            if contract and volume_24h >= 1000000:
                 safe_tickers.append({
                     'contract': contract,
                     'change_percentage': change_pct,
@@ -535,16 +545,15 @@ def market_overview():
 
 @app.route('/test_email')
 def test_email():
-    """Test email gönder"""
     test_alert = {
         'symbol': 'BTCUSDT',
         'price': 45234.56,
-        'rsi': 23.5,
+        'rsi': 28.5,
         'signal_type': 'OVERSOLD',
-        'change_24h': -8.2,
+        'change_24h': -5.2,
         'volume_24h': 2500000000,
         'timestamp': datetime.now().isoformat(),
-        'signal_description': 'RSI 23.5 - Aşırı satılmış, güçlü alım fırsatı'
+        'signal_description': 'RSI 28.5 - Oversold - Alım fırsatı'
     }
     
     email_service.send_rsi_alert(test_alert)
@@ -555,24 +564,30 @@ def test_email():
 
 @app.route('/system_status')
 def system_status():
-    """Sistem durumu"""
     return jsonify({
-        "system": "Simple RSI Extreme Signal Monitor",
-        "version": "2.0 - No Cooldown + 1min RSI",
+        "system": "Fast RSI Signal Monitor",
+        "version": "3.0 - Optimized & Fixed",
         "keepalive_active": keep_alive_service.is_running,
         "email_configured": bool(email_service.sender_email and email_service.sender_password),
         "scanner_active": scheduler.running,
-        "scan_interval": "2 minutes",
+        "is_scanning": futures_monitor.is_scanning,
+        "scan_interval": "3 minutes",
         "active_rsi_signals": len(futures_monitor.active_signals),
         "futures_contracts_loaded": len(futures_monitor.futures_contracts),
         "criteria": {
-            "rsi_oversold": "≤ 25 (Extreme)",
-            "rsi_overbought": "≥ 85 (Extreme)", 
+            "rsi_oversold": "≤ 30 (Daha esnek - daha fazla sinyal)",
+            "rsi_overbought": "≥ 80 (Daha esnek - daha fazla sinyal)", 
             "minimum_volume": "1M USD",
-            "email_cooldown": "YOK - Her sinyal gönderilir",
-            "candlestick_interval": "1 minute"
+            "email_cooldown": "10 minutes per coin",
+            "candlestick_interval": "1 minute",
+            "scan_limit": "Top 150 coins (hız optimizasyonu)"
         },
-        "data_source": "Gate.io Futures API"
+        "optimizations": {
+            "scan_overlap_prevention": "Enabled",
+            "max_scan_instances": "1",
+            "timeout_protection": "8s per request",
+            "top_coins_only": "150"
+        }
     })
 
 @app.route('/keepalive')
@@ -580,50 +595,52 @@ def keepalive_endpoint():
     return {
         'status': 'alive',
         'timestamp': time.time(),
-        'system': 'Simple RSI Monitor Active',
-        'rsi_signals': len(futures_monitor.active_signals)
+        'system': 'Fast RSI Monitor Active',
+        'signals': len(futures_monitor.active_signals),
+        'is_scanning': futures_monitor.is_scanning
     }, 200
 
 @app.route('/manual_scan')
 def manual_scan():
-    """Manuel RSI taraması"""
     try:
-        logging.info("🔍 Manuel RSI taraması başlatıldı...")
+        if futures_monitor.is_scanning:
+            return jsonify({
+                "message": "Tarama zaten devam ediyor, lütfen bekleyin",
+                "is_scanning": True
+            }), 429
+        
+        logging.info("🔍 Manuel RSI taraması...")
         futures_monitor.analyze_rsi_signals()
         return jsonify({
-            "message": "Manuel RSI taraması tamamlandı",
-            "rsi_signals_found": len(futures_monitor.active_signals),
+            "message": "Manuel tarama tamamlandı",
+            "rsi_signals": len(futures_monitor.active_signals),
             "signals": futures_monitor.active_signals,
             "scan_time": datetime.now().isoformat()
         })
     except Exception as e:
         return jsonify({
             "error": str(e),
-            "message": "Manuel tarama sırasında hata oluştu"
+            "message": "Tarama hatası"
         }), 500
 
 @app.route('/rsi_debug')
 def rsi_debug():
-    """RSI debug bilgileri"""
     try:
         tickers = futures_monitor.get_futures_tickers()
         if not tickers:
-            return jsonify({"error": "Ticker verileri alınamadı"})
+            return jsonify({"error": "Ticker alınamadı"})
         
-        # Volume'a göre sırala
         tickers.sort(key=lambda x: futures_monitor.safe_float(x.get('volume_24h', 0)), reverse=True)
         
         debug_info = []
         rsi_values = []
         
-        # İlk 20 coin için debug
         for ticker in tickers[:20]:
             contract = ticker.get('contract', '')
             volume_24h = futures_monitor.safe_float(ticker.get('volume_24h'))
             price = futures_monitor.safe_float(ticker.get('last'))
             
-            if volume_24h >= 1000000:  # 1M+ volume
-                # RSI hesapla
+            if volume_24h >= 1000000:
                 candles = futures_monitor.get_candlestick_data(contract, limit=20)
                 if len(candles) >= 15:
                     for candle in candles:
@@ -639,12 +656,11 @@ def rsi_debug():
                     
                     debug_info.append({
                         'contract': contract,
-                        'volume_24h_usd': volume_24h,
+                        'volume_24h': volume_24h,
                         'price': price,
                         'rsi': rsi_value,
-                        'is_extreme': is_extreme,
-                        'signal_type': signal_type,
-                        'candles_count': len(candles)
+                        'is_signal': is_extreme,
+                        'signal_type': signal_type
                     })
                     
                     if rsi_value:
@@ -652,16 +668,13 @@ def rsi_debug():
         
         return jsonify({
             "total_tickers": len(tickers),
-            "volume_threshold": "1M USD",
-            "rsi_extreme_thresholds": "≤25 or ≥85",
-            "candlestick_interval": "1 minute",
-            "cooldown": "NONE - Every signal sent",
+            "rsi_thresholds": "≤30 or ≥80",
             "top_20_analysis": debug_info,
             "rsi_stats": {
                 "count": len(rsi_values),
                 "min": min(rsi_values) if rsi_values else None,
                 "max": max(rsi_values) if rsi_values else None,
-                "avg": sum(rsi_values) / len(rsi_values) if rsi_values else None
+                "avg": round(sum(rsi_values) / len(rsi_values), 1) if rsi_values else None
             }
         })
     except Exception as e:
