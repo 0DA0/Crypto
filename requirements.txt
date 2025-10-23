@@ -3,4 +3,4 @@ requests
 numpy
 python-dotenv
 apscheduler
-guincorn
+gunicorn
