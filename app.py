@@ -213,6 +213,10 @@ def rsi_monitor_loop():
         check_rsi_and_notify()
         time.sleep(300)  # 5 min
 
+@app.route('/')
+def index():
+    return render_template('index.html', logs=error_logs)
+
 if __name__ == '__main__':
     scheduler = BackgroundScheduler()
     scheduler.add_job(keep_alive, 'interval', minutes=10)
