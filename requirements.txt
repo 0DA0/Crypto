@@ -1,7 +1,6 @@
-Flask
+flask
 requests
-apscheduler
+numpy
 python-dotenv
-gunicorn
-setuptools
-wheel
+apscheduler
+guincorn
