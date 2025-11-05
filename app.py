@@ -3,24 +3,20 @@ import time
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-import smtplib
-from email.mime.text import MIMEText
 from datetime import datetime
 from threading import Thread
 from flask import Flask, render_template
 import numpy as np  # For RSI calculation
 from dotenv import load_dotenv
-from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
 
 # Load .env file
 load_dotenv()
 
-GMAIL_USER = os.getenv('GMAIL_USER')
-GMAIL_PASSWORD = os.getenv('GMAIL_PASSWORD')
+GMAIL_USER = os.getenv('GMAIL_USER')  # Now used as sender email for Brevo
+BREVO_API_KEY = os.getenv('BREVO_API_KEY')
 RECEIVER_EMAIL = os.getenv('RECEIVER_EMAIL') or GMAIL_USER  # If empty, use sender
-RENDER_URL = os.getenv('RENDER_URL', 'https://crypto-cnc6.onrender.com')  # Default if not in .env
 
 # Global lists
 error_logs = []
@@ -69,14 +65,24 @@ def send_email(subject, body):
         </body>
         </html>
         """
-        msg = MIMEText(html_body, 'html')
-        msg['Subject'] = subject
-        msg['From'] = GMAIL_USER
-        msg['To'] = RECEIVER_EMAIL
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-            server.login(GMAIL_USER, GMAIL_PASSWORD)
-            server.sendmail(GMAIL_USER, RECEIVER_EMAIL, msg.as_string())
-        print(f"Mail sent: {subject}")
+        
+        # Brevo API payload
+        payload = {
+            "sender": {"name": "Grok Futures", "email": GMAIL_USER},
+            "to": [{"email": RECEIVER_EMAIL}],
+            "subject": subject,
+            "htmlContent": html_body
+        }
+        
+        headers = {
+            "accept": "application/json",
+            "api-key": BREVO_API_KEY,
+            "content-type": "application/json"
+        }
+        
+        response = requests.post("https://api.brevo.com/v3/smtp/email", json=payload, headers=headers)
+        response.raise_for_status()
+        print(f"Mail sent via Brevo: {subject}")
     except Exception as e:
         log_error(f"Email sending failed: {str(e)}")
         print(f"Mail error: {str(e)}")
@@ -121,6 +127,19 @@ def fetch_candlesticks(contract, interval='5m', limit=7):
         print(f"Candlesticks error for {contract}: {str(e)}")
         return []  # Hata durumunda boş dön, skip et
 
+def fetch_trades(contract, limit=100):  # Increased limit for filtering
+    url = f"https://api.gateio.ws/api/v4/futures/usdt/trades?contract={contract}&limit={limit}"
+    try:
+        response = session.get(url, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        print(f"Fetched {len(data)} trades for {contract}")
+        return data
+    except Exception as e:
+        log_error(f"Failed to fetch trades for {contract}: {str(e)}")
+        print(f"Trades error for {contract}: {str(e)}")
+        return []
+
 def check_rsi_and_notify():
     print(f"Starting RSI check at {datetime.now()}")
     contracts = fetch_contracts()
@@ -157,11 +176,12 @@ def check_rsi_and_notify():
         current_price = closes[-1]
         signal_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-        # Last candle details for %3 movement
+        # Last candle details for %3 movement and time filter
         last_candle = candlesticks[-1]
         open_price = float(last_candle['o'])
         close_price = float(last_candle['c'])
         change_percent = (close_price - open_price) / open_price if open_price != 0 else 0
+        candle_start_time = int(last_candle['t'])  # Unix timestamp in seconds
 
         signal = None
         table_rows = f"""
@@ -178,6 +198,31 @@ def check_rsi_and_notify():
             stop = entry * (1 - 0.025)
             subject = f"{symbol} - RSI(6) Alım Sinyali"
             table_rows += f'<tr><td style="border: 1px solid #ddd; padding: 8px;">Stop Değeri</td><td style="border: 1px solid #ddd; padding: 8px;">{stop}</td></tr>'
+
+            # Fetch last 100 trades and filter by last 5min candle time
+            trades = fetch_trades(symbol, limit=100)
+            if trades:
+                # Filter trades within the last candle's time (approx 5min)
+                candle_end_time = candle_start_time + 300  # 5min in seconds
+                filtered_trades = [trade for trade in trades if candle_start_time <= int(trade['create_time_ms']) / 1000 <= candle_end_time]
+
+                if filtered_trades:
+                    # Separate buy and sell (assuming 'side' is 'buy' or 'sell', adjust if 'bid'/'ask')
+                    buy_trades = [trade for trade in filtered_trades if trade.get('side') == 'buy']  # or 'bid'
+                    sell_trades = [trade for trade in filtered_trades if trade.get('side') == 'sell']  # or 'ask'
+
+                    # For buy: top 5 by amount = size * price
+                    top_buy = sorted([(float(trade['size']) * float(trade['price']), float(trade['price'])) for trade in buy_trades], reverse=True)[:5]
+                    top_sell = sorted([(float(trade['size']) * float(trade['price']), float(trade['price'])) for trade in sell_trades], reverse=True)[:5]
+
+                    table_rows += f'<tr><td style="border: 1px solid #ddd; padding: 8px;">En Büyük 5 Buy İşlem (Tutar @ Fiyat)</td><td style="border: 1px solid #ddd; padding: 8px;">{", ".join([f"{amt:.2f} USDT @ {price:.4f}" for amt, price in top_buy])}</td></tr>'
+                    table_rows += f'<tr><td style="border: 1px solid #ddd; padding: 8px;">En Büyük 5 Sell İşlem (Tutar @ Fiyat)</td><td style="border: 1px solid #ddd; padding: 8px;">{", ".join([f"{amt:.2f} USDT @ {price:.4f}" for amt, price in top_sell])}</td></tr>'
+
+                    total_buy = sum(amt for amt, _ in top_buy)
+                    total_sell = sum(amt for amt, _ in top_sell)
+                    table_rows += f'<tr><td style="border: 1px solid #ddd; padding: 8px;">Toplam Buy Tutar (En Büyük 5)</td><td style="border: 1px solid #ddd; padding: 8px;">{total_buy:.2f} USDT</td></tr>'
+                    table_rows += f'<tr><td style="border: 1px solid #ddd; padding: 8px;">Toplam Sell Tutar (En Büyük 5)</td><td style="border: 1px solid #ddd; padding: 8px;">{total_sell:.2f} USDT</td></tr>'
+
             send_email(subject, table_rows)
             signal = {"symbol": symbol, "type": signal_type, "rsi": rsi, "entry": entry, "stop": stop, "price": current_price, "time": signal_time}
             signals_found += 1
@@ -188,6 +233,31 @@ def check_rsi_and_notify():
             stop = entry * (1 + 0.025)
             subject = f"{symbol} - RSI(6) Satım Sinyali"
             table_rows += f'<tr><td style="border: 1px solid #ddd; padding: 8px;">Stop Değeri</td><td style="border: 1px solid #ddd; padding: 8px;">{stop}</td></tr>'
+
+            # Fetch last 100 trades and filter by last 5min candle time
+            trades = fetch_trades(symbol, limit=100)
+            if trades:
+                # Filter trades within the last candle's time (approx 5min)
+                candle_end_time = candle_start_time + 300  # 5min in seconds
+                filtered_trades = [trade for trade in trades if candle_start_time <= int(trade['create_time_ms']) / 1000 <= candle_end_time]
+
+                if filtered_trades:
+                    # Separate buy and sell (assuming 'side' is 'buy' or 'sell', adjust if 'bid'/'ask')
+                    buy_trades = [trade for trade in filtered_trades if trade.get('side') == 'buy']  # or 'bid'
+                    sell_trades = [trade for trade in filtered_trades if trade.get('side') == 'sell']  # or 'ask'
+
+                    # For buy: top 5 by amount = size * price
+                    top_buy = sorted([(float(trade['size']) * float(trade['price']), float(trade['price'])) for trade in buy_trades], reverse=True)[:5]
+                    top_sell = sorted([(float(trade['size']) * float(trade['price']), float(trade['price'])) for trade in sell_trades], reverse=True)[:5]
+
+                    table_rows += f'<tr><td style="border: 1px solid #ddd; padding: 8px;">En Büyük 5 Buy İşlem (Tutar @ Fiyat)</td><td style="border: 1px solid #ddd; padding: 8px;">{", ".join([f"{amt:.2f} USDT @ {price:.4f}" for amt, price in top_buy])}</td></tr>'
+                    table_rows += f'<tr><td style="border: 1px solid #ddd; padding: 8px;">En Büyük 5 Sell İşlem (Tutar @ Fiyat)</td><td style="border: 1px solid #ddd; padding: 8px;">{", ".join([f"{amt:.2f} USDT @ {price:.4f}" for amt, price in top_sell])}</td></tr>'
+
+                    total_buy = sum(amt for amt, _ in top_buy)
+                    total_sell = sum(amt for amt, _ in top_sell)
+                    table_rows += f'<tr><td style="border: 1px solid #ddd; padding: 8px;">Toplam Buy Tutar (En Büyük 5)</td><td style="border: 1px solid #ddd; padding: 8px;">{total_buy:.2f} USDT</td></tr>'
+                    table_rows += f'<tr><td style="border: 1px solid #ddd; padding: 8px;">Toplam Sell Tutar (En Büyük 5)</td><td style="border: 1px solid #ddd; padding: 8px;">{total_sell:.2f} USDT</td></tr>'
+
             send_email(subject, table_rows)
             signal = {"symbol": symbol, "type": signal_type, "rsi": rsi, "entry": entry, "stop": stop, "price": current_price, "time": signal_time}
             signals_found += 1
@@ -196,17 +266,6 @@ def check_rsi_and_notify():
             signals.append(signal)
 
     print(f"Finished RSI check: Processed {processed} coins, skipped {skipped_volume} due to low volume, found {signals_found} signals")
-
-def keep_alive():
-    try:
-        response = requests.get(f"{RENDER_URL}/keepalive")
-        print(f"Keep-alive request sent: {response.status_code}")
-    except Exception as e:
-        log_error(f"Keep-alive failed: {str(e)}")
-
-@app.route('/keepalive')
-def keepalive():
-    return "Alive", 200  # Dummy response for keep-alive
 
 def rsi_monitor_loop():
     while True:
@@ -218,10 +277,6 @@ def index():
     return render_template('index.html', logs=error_logs)
 
 if __name__ == '__main__':
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(keep_alive, 'interval', minutes=10)
-    scheduler.start()
-
     monitor_thread = Thread(target=rsi_monitor_loop)
     monitor_thread.daemon = True
     monitor_thread.start()

@@ -1,6 +1,6 @@
 flask
 requests
+urllib3
 numpy
 python-dotenv
-apscheduler
 gunicorn
