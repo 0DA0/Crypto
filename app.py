@@ -3,20 +3,24 @@ import time
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+import smtplib
+from email.mime.text import MIMEText
 from datetime import datetime
 from threading import Thread
 from flask import Flask, render_template
 import numpy as np  # For RSI calculation
 from dotenv import load_dotenv
+from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
 
 # Load .env file
 load_dotenv()
 
-GMAIL_USER = os.getenv('GMAIL_USER')  # Now used as sender email for Brevo
-BREVO_API_KEY = os.getenv('BREVO_API_KEY')
+GMAIL_USER = os.getenv('GMAIL_USER')
+GMAIL_PASSWORD = os.getenv('GMAIL_PASSWORD')
 RECEIVER_EMAIL = os.getenv('RECEIVER_EMAIL') or GMAIL_USER  # If empty, use sender
+RENDER_URL = os.getenv('RENDER_URL', 'https://crypto-hadf.onrender.com')  # Default if not in .env
 
 # Global lists
 error_logs = []
@@ -65,24 +69,14 @@ def send_email(subject, body):
         </body>
         </html>
         """
-        
-        # Brevo API payload
-        payload = {
-            "sender": {"name": "Grok Futures", "email": GMAIL_USER},
-            "to": [{"email": RECEIVER_EMAIL}],
-            "subject": subject,
-            "htmlContent": html_body
-        }
-        
-        headers = {
-            "accept": "application/json",
-            "api-key": BREVO_API_KEY,
-            "content-type": "application/json"
-        }
-        
-        response = requests.post("https://api.brevo.com/v3/smtp/email", json=payload, headers=headers)
-        response.raise_for_status()
-        print(f"Mail sent via Brevo: {subject}")
+        msg = MIMEText(html_body, 'html')
+        msg['Subject'] = subject
+        msg['From'] = GMAIL_USER
+        msg['To'] = RECEIVER_EMAIL
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+            server.login(GMAIL_USER, GMAIL_PASSWORD)
+            server.sendmail(GMAIL_USER, RECEIVER_EMAIL, msg.as_string())
+        print(f"Mail sent: {subject}")
     except Exception as e:
         log_error(f"Email sending failed: {str(e)}")
         print(f"Mail error: {str(e)}")
